@@ -29,6 +29,41 @@
         .dict-table th, .dict-table td { padding: 8px; text-align: left; border-bottom: 1px solid #3a3a3d; }
         .dict-form { display: flex; gap: 5px; margin-top: 10px; }
         .log-list { list-style: none; padding: 10px; max-height: 150px; overflow-y: auto; background: #000; border-radius: 4px; font-family: monospace; font-size: 0.8em; }
+
+        /* モード切り替えスイッチのレイアウト */
+        .mode-selector {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 15px;
+            font-size: 0.9em;
+            color: #adadb8;
+        }
+        .mode-selector label {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        /* マイクボタン（スマホ長押し対策） */
+        #mic-btn {
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+        /* 録音中の光るアニメーション */
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 5px #e0245e, 0 0 10px #e0245e; }
+            50% { box-shadow: 0 0 20px #e0245e, 0 0 35px #e0245e; }
+            100% { box-shadow: 0 0 5px #e0245e, 0 0 10px #e0245e; }
+        }
+        .recording-active {
+            background-color: #e0245e !important;
+            border: 2px solid #ff7396;
+            animation: pulse-glow 1.5s infinite;
+            /* アニメーション中にボタンサイズが変わらないよう調整 */
+            box-sizing: border-box; 
+        }
     </style>
 </head>
 <body>
@@ -58,9 +93,6 @@
             <span>Login: <strong id="user-info" style="color:#bf94ff;">---</strong></span>
             <button id="logout-btn" class="secondary" style="width: auto; padding: 5px 10px; margin: 0; font-size: 0.8em;">Logout</button>
         </div>
-
-        <button id="mic-btn" style="font-size: 1.1em; height: 50px;">マイクをオンにする</button>
-        <p style="text-align: center; font-size: 0.8em; color: #adadb8;">Status: <span id="status-text">停止中</span></p>
 
         <div style="margin-top: 10px;">
             <details>
@@ -102,6 +134,14 @@
             <textarea id="buffer-box" readonly placeholder="音声がここに溜まります..."></textarea>
         </div>
 
+        <div class="mode-selector">
+            <label><input type="radio" name="mic-mode" value="toggle" checked> トグル (タップでON/OFF)</label>
+            <label><input type="radio" name="mic-mode" value="ptt"> PTT (長押しで話す)</label>
+        </div>
+
+        <button id="mic-btn" style="font-size: 1.1em; height: 50px; transition: all 0.3s ease;">マイクをオンにする</button>
+        <p style="text-align: center; font-size: 0.8em; color: #adadb8;">Status: <span id="status-text">停止中</span></p>
+
         <label>ログ</label>
         <ul id="log-list" class="log-list"></ul>
     </div>
@@ -117,6 +157,23 @@
     let myUserId = '';
     let recognition;
     let isRecording = false;
+    let currentMode = 'toggle'; // 'toggle' または 'ptt'
+
+    // --- モード切り替えの監視 ---
+    const modeRadios = document.querySelectorAll('input[name="mic-mode"]');
+    const micBtn = document.getElementById('mic-btn');
+
+    modeRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            currentMode = e.target.value;
+            // モード変更時は安全のため録音を強制停止
+            if (isRecording) {
+                recognition.stop();
+            }
+            // ボタンの初期テキスト変更
+            micBtn.innerText = currentMode === 'toggle' ? 'マイクをオンにする' : '押している間だけ話す';
+        });
+    });
 
     // --- 設定値の読み込み ---
     const cmdSendInput = document.getElementById('cmd-send');
@@ -196,6 +253,39 @@
         });
     });
 
+    // --- マイクボタンのイベント処理 ---
+    // 1. トグルモード用の処理 (Click)
+    micBtn.addEventListener('click', (e) => {
+        if (currentMode !== 'toggle') return;
+        if (isRecording) { 
+            recognition.stop(); 
+        } else { 
+            try { recognition.start(); } catch(err){} 
+        }
+    });
+    // 2. PTTモード用の処理 (Mousedown / Touchstart)
+    const startPtt = (e) => {
+        if (currentMode !== 'ptt') return;
+        e.preventDefault(); // スマホでのテキスト選択やメニュー表示を防止
+        if (!isRecording) {
+            try { recognition.start(); } catch(err){}
+        }
+    };
+    // 3. PTTモード用の処理 (Mouseup / Touchend / Mouseleave)
+    const stopPtt = (e) => {
+        if (currentMode !== 'ptt') return;
+        e.preventDefault();
+        if (isRecording) {
+            recognition.stop();
+        }
+    };
+    // PTTイベントの登録
+    micBtn.addEventListener('mousedown', startPtt);
+    micBtn.addEventListener('touchstart', startPtt);
+    micBtn.addEventListener('mouseup', stopPtt);
+    micBtn.addEventListener('touchend', stopPtt);
+    micBtn.addEventListener('mouseleave', stopPtt); // ボタンから指やカーソルが外れたら止める
+
     // --- 辞書ロジック ---
     function renderDictionary() {
         const tbody = document.getElementById('dict-body');
@@ -238,16 +328,18 @@
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        recognition.continuous = true;
+        recognition.continuous = true; // PTTでも長文を途切れさせないためにtrueにしておく
 
         recognition.onstart = () => {
             isRecording = true;
             document.getElementById('status-text').innerText = '聴取中...';
-            document.getElementById('mic-btn').innerText = 'マイクをオフにする';
-            document.getElementById('mic-btn').style.backgroundColor = '#e0245e';
+            // JSでの直接色指定をやめ、CSSクラスを付与する
+            micBtn.classList.add('recording-active');
+            micBtn.innerText = currentMode === 'toggle' ? 'マイクをオフにする' : '録音中...';
         };
 
         recognition.onresult = (event) => {
+            // (中略) 既存の onresult の中身はそのまま維持してください
             let interim = '';
             let final = '';
             for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -275,10 +367,15 @@
         };
 
         recognition.onend = () => {
+            isRecording = false;
             document.getElementById('status-text').innerText = '停止中';
-            document.getElementById('mic-btn').innerText = 'マイクをオンにする';
-            document.getElementById('mic-btn').style.backgroundColor = '#9146ff';
-            if (isRecording) recognition.start(); // 自動再開
+            // CSSクラスを外す
+            micBtn.classList.remove('recording-active');
+            micBtn.innerText = currentMode === 'toggle' ? 'マイクをオンにする' : '押している間だけ話す';
+            
+            // ★重要: 勝手に再起動するロジック（if(isRecording) recognition.start()）は削除しました。
+            // これにより、トグルモードでも無音が続いて自動停止した場合は、ユーザーが手動で再開する必要があります。
+            // （意図しない通知音スパムを防ぐためです）
         };
     }
 
