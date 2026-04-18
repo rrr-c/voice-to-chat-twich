@@ -98,6 +98,16 @@
             <details>
                 <summary style="cursor:pointer; font-weight:bold; color:#bf94ff; margin-bottom: 10px;">⚙️ 詳細設定 (コマンド・送信先・辞書)</summary>
                 
+                <div style="margin-top: 15px; border-top: 1px solid #3a3a3d; padding-top: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: #efeff1;">
+                        <input type="checkbox" id="auto-restart-chk" style="width: auto;"> 
+                        認識が切れたら自動で再開する (トグルモードのみ)
+                    </label>
+                    <p style="font-size: 0.75em; color: #adadb8; margin: 5px 0 0 25px;">
+                        ※ONにすると、無音が続いた際に再起動し、スマホでは通知音が鳴ります。
+                    </p>
+                </div>
+
                 <div class="settings-grid">
                     <div>
                         <label>送信コマンド</label>
@@ -179,10 +189,12 @@
     const cmdSendInput = document.getElementById('cmd-send');
     const cmdCancelInput = document.getElementById('cmd-cancel');
     const targetChannelInput = document.getElementById('target-channel');
+    const autoRestartChk = document.getElementById('auto-restart-chk');
 
     cmdSendInput.value = localStorage.getItem('twitch_cmd_send') || "チャット送信";
     cmdCancelInput.value = localStorage.getItem('twitch_cmd_cancel') || "キャンセル";
     targetChannelInput.value = localStorage.getItem('twitch_target_channel') || "";
+    autoRestartChk.checked = localStorage.getItem('twitch_auto_restart') === 'true';
 
     let emoteDictionary = JSON.parse(localStorage.getItem('twitch_voice_dict')) || [
         { word: "カッパ", code: "Kappa" },
@@ -251,6 +263,9 @@
             localStorage.setItem('twitch_cmd_cancel', cmdCancelInput.value);
             localStorage.setItem('twitch_target_channel', targetChannelInput.value);
         });
+    });
+    autoRestartChk.addEventListener('change', () => {
+        localStorage.setItem('twitch_auto_restart', autoRestartChk.checked);
     });
 
     // --- マイクボタンのイベント処理 ---
@@ -367,15 +382,30 @@
         };
 
         recognition.onend = () => {
-            isRecording = false;
+            // 状態の更新
+            if (currentMode === 'toggle' && isRecording) {
+                // トグルモードで、ユーザーが「停止」を押していない場合
+                const shouldRestart = localStorage.getItem('twitch_auto_restart') === 'true';
+                
+                if (shouldRestart) {
+                    // 自動再開が有効なら即座にリスタート
+                    try { 
+                        recognition.start(); 
+                        return; // 以下の「停止中」処理をスキップ
+                    } catch(e) {}
+                } else {
+                    // 自動再開が無効なら録音状態をOFFにする
+                    isRecording = false;
+                }
+            } else {
+                // PTTモード、またはユーザーが手動で止めた場合
+                isRecording = false;
+            }
+
+            // UIの更新 (停止状態にする)
             document.getElementById('status-text').innerText = '停止中';
-            // CSSクラスを外す
             micBtn.classList.remove('recording-active');
             micBtn.innerText = currentMode === 'toggle' ? 'マイクをオンにする' : '押している間だけ話す';
-            
-            // ★重要: 勝手に再起動するロジック（if(isRecording) recognition.start()）は削除しました。
-            // これにより、トグルモードでも無音が続いて自動停止した場合は、ユーザーが手動で再開する必要があります。
-            // （意図しない通知音スパムを防ぐためです）
         };
     }
 
