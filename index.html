@@ -343,76 +343,62 @@
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        recognition.continuous = true; // PTTでも長文を途切れさせないためにtrueにしておく
+        recognition.continuous = true; 
 
         recognition.onstart = () => {
             isRecording = true;
             document.getElementById('status-text').innerText = '聴取中...';
-            // JSでの直接色指定をやめ、CSSクラスを付与する
             micBtn.classList.add('recording-active');
             micBtn.innerText = currentMode === 'toggle' ? 'マイクをオフにする' : '録音中...';
         };
 
         recognition.onresult = (event) => {
-            // (中略) 既存の onresult の中身はそのまま維持してください
-            let interim = '';
-            let final = '';
+            let interimTranscript = '';
+            const buffer = document.getElementById('buffer-box');
+            const sCmd = cmdSendInput.value.trim();
+            const cCmd = cmdCancelInput.value.trim();
+
+            // resultIndex からループを開始し、新しく確定した部分のみを処理する
             for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) final += event.results[i][0].transcript;
-                else interim += event.results[i][0].transcript;
-            }
-            document.getElementById('preview-box').innerText = interim;
-
-            if (final) {
-                const sCmd = cmdSendInput.value.trim();
-                const cCmd = cmdCancelInput.value.trim();
-                const buffer = document.getElementById('buffer-box');
-
-                if (cCmd && final.includes(cCmd)) {
-                    buffer.value = "";
-                    addLog("キャンセルしました");
-                } else if (sCmd && final.includes(sCmd)) {
-                    const clean = final.replace(new RegExp(sCmd, 'g'), "").trim();
-                    buffer.value += applyDict(clean);
-                    sendTwitchMessage();
+                const transcript = event.results[i][0].transcript;
+                
+                if (event.results[i].isFinal) {
+                    // 【確定した時の処理】
+                    if (cCmd && transcript.includes(cCmd)) {
+                        buffer.value = "";
+                        addLog("キャンセルしました");
+                    } else if (sCmd && transcript.includes(sCmd)) {
+                        // 送信コマンドが含まれる場合
+                        const clean = transcript.replace(new RegExp(sCmd, 'g'), "").trim();
+                        if(clean) buffer.value += applyDict(clean);
+                        sendTwitchMessage();
+                    } else {
+                        // 通常の文章
+                        buffer.value += applyDict(transcript);
+                    }
                 } else {
-                    buffer.value += applyDict(final);
+                    // 【認識中の処理】
+                    interimTranscript += transcript;
                 }
             }
+
+            // 認識中テキストをプレビューに表示
+            document.getElementById('preview-box').innerText = interimTranscript;
         };
 
         recognition.onend = () => {
-            // 状態の更新
             if (currentMode === 'toggle' && isRecording) {
-                // トグルモードで、ユーザーが「停止」を押していない場合
                 const shouldRestart = localStorage.getItem('twitch_auto_restart') === 'true';
-                
                 if (shouldRestart) {
-                    // 自動再開が有効なら即座にリスタート
-                    try { 
-                        recognition.start(); 
-                        return; // 以下の「停止中」処理をスキップ
-                    } catch(e) {}
-                } else {
-                    // 自動再開が無効なら録音状態をOFFにする
-                    isRecording = false;
+                    try { recognition.start(); return; } catch(e) {}
                 }
-            } else {
-                // PTTモード、またはユーザーが手動で止めた場合
-                isRecording = false;
             }
-
-            // UIの更新 (停止状態にする)
+            isRecording = false;
             document.getElementById('status-text').innerText = '停止中';
             micBtn.classList.remove('recording-active');
             micBtn.innerText = currentMode === 'toggle' ? 'マイクをオンにする' : '押している間だけ話す';
         };
     }
-
-    document.getElementById('mic-btn').addEventListener('click', () => {
-        if (isRecording) { isRecording = false; recognition.stop(); }
-        else { recognition.start(); }
-    });
 
     // --- Twitch API ---
     async function fetchUserInfo() {
