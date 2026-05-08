@@ -248,6 +248,7 @@
                 isRecording = true; // onstart(非同期)を待たず即座にフラグを立てる
                                     // → 複数イベントが連続して呼ばれても2重startを防ぐ
                 try {
+                    addLog("認識開始");
                     recognition.start();
                 } catch(e) {
                     isRecording = false; // 失敗したらフラグを戻す
