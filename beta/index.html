@@ -28,7 +28,7 @@
         .dict-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9em; }
         .dict-table th, .dict-table td { padding: 8px; text-align: left; border-bottom: 1px solid #3a3a3d; }
         .dict-form { display: flex; gap: 5px; margin-top: 10px; }
-        .log-list { list-style: none; padding: 10px; max-height: 150px; overflow-y: auto; background: #000; border-radius: 4px; font-family: monospace; font-size: 0.8em; }
+        .log-list { list-style: none; padding: 10px; max-height: 350px; overflow-y: auto; background: #000; border-radius: 4px; font-family: monospace; font-size: 0.75em; }
 
         .mode-selector { display: flex; justify-content: center; gap: 20px; margin-bottom: 15px; font-size: 0.9em; color: #adadb8; }
         .mode-selector label { cursor: pointer; display: flex; align-items: center; gap: 5px; }
@@ -124,8 +124,48 @@
     let recognition;
     let isRecording = false;
     let currentMode = 'toggle';
-    let isIntentionalStop = false;   // 意図的な停止かどうか
-    let restartTimer = null;         // 再起動タイマー
+    let isIntentionalStop = false;
+    let restartTimer = null;
+    let touchHandled = false;
+
+    // --- デバッグ用カウンタ ---
+    let instanceCounter = 0;   // recognition インスタンスの通し番号
+    let sessionCounter  = 0;   // recognition.start() を呼ぶたびに採番するセッション番号
+    let currentInstanceId = null;
+    let currentSessionId  = null;
+
+    // ms精度タイムスタンプ
+    function ts() {
+        const now = new Date();
+        return `${now.toLocaleTimeString()}.${String(now.getMilliseconds()).padStart(3,'0')}`;
+    }
+
+    // デバッグログ: 画面のログリストとコンソール両方に出力
+    function dbg(category, msg, extra = '') {
+        const line = `[${ts()}][${category}] ${msg}${extra ? ' | ' + extra : ''}`;
+        console.log(line);
+        const li = document.createElement('li');
+        li.innerText = line;
+        // カテゴリ別に色分け
+        const colors = {
+            'EVENT':    '#f5a623',  // タッチ/クリックイベント
+            'ACTION':   '#7ed321',  // handleMicAction
+            'START':    '#4a90e2',  // recognition.start
+            'STOP':     '#9b9b9b',  // recognition.abort/stop
+            'ONSTART':  '#50e3c2',  // recognition.onstart callback
+            'ONEND':    '#bd10e0',  // recognition.onend callback
+            'ONRESULT': '#e8f',     // recognition.onresult callback
+            'BUFFER':   '#e0245e',  // バッファへの書き込み
+            'ONERROR':  '#ff0000',  // エラー
+            'INFO':     '#adadb8',  // その他
+        };
+        li.style.color = colors[category] || '#adadb8';
+        document.getElementById('log-list').prepend(li);
+    }
+
+    function addLog(text) {
+        dbg('INFO', text);
+    }
 
     const micBtn = document.getElementById('mic-btn');
     const bufferBox = document.getElementById('buffer-box');
@@ -150,7 +190,7 @@
         const params = getHashParams();
         if (params.access_token && clientId) {
             accessToken = params.access_token;
-            window.location.hash = ""; 
+            window.location.hash = "";
             showSection('app-section');
             await fetchUserInfo();
             renderDictionary();
@@ -172,15 +212,21 @@
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) { alert("非対応ブラウザです"); return; }
 
-        // インスタンスは一度だけ生成し start()/abort() で使い回す。
-        // onend の中でインスタンスを再生成すると、古い rec のクロージャが生き続け
-        // ハンドラが増殖するため。
+        instanceCounter++;
+        currentInstanceId = `inst#${instanceCounter}`;
+        dbg('INFO', `recognition インスタンス生成`, `instanceId=${currentInstanceId}`);
+
         recognition = new SpeechRecognition();
+        recognition._instanceId = currentInstanceId; // インスタンス自体にIDを付与
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
         recognition.continuous = true;
 
         recognition.onstart = () => {
+            // onstart が呼ばれた時点でのインスタンスIDとセッションIDを記録
+            const iid = recognition._instanceId;
+            const sid = recognition._currentSessionId || '(未採番)';
+            dbg('ONSTART', `認識開始コールバック`, `instanceId=${iid} sessionId=${sid} isRecording(before)=${isRecording}`);
             isRecording = true;
             statusText.innerText = '聴取中...';
             micBtn.classList.add('recording-active');
@@ -188,40 +234,60 @@
         };
 
         recognition.onresult = (event) => {
-            // Android Chrome 対策:
-            // continuous:true でも内部でセッションがリセットされ resultIndex が
-            // 毎回 0 に戻るため、ループで全件処理すると過去の結果を再処理する。
-            // 「今届いた最後の1件だけ」を見ることで重複を防ぐ。
-            const lastResult = event.results[event.results.length - 1];
+            const iid = recognition._instanceId;
+            const sid = recognition._currentSessionId;
+            const total = event.results.length;
+            const ridx  = event.resultIndex;
+            const lastResult = event.results[total - 1];
+            const isFinal = lastResult.isFinal;
+            const transcript = lastResult[0].transcript;
 
-            if (lastResult.isFinal) {
+            dbg('ONRESULT',
+                `"${transcript.substring(0, 30)}"`,
+                `instanceId=${iid} sessionId=${sid} isFinal=${isFinal} results.length=${total} resultIndex=${ridx}`
+            );
+
+            if (isFinal) {
                 previewBox.innerText = "";
-                const finalTranscript = lastResult[0].transcript;
                 const sCmd = cmdSendInput.value.trim();
                 const cCmd = cmdCancelInput.value.trim();
 
-                if (cCmd && finalTranscript.includes(cCmd)) {
+                if (cCmd && transcript.includes(cCmd)) {
+                    dbg('BUFFER', `キャンセル実行`, `instanceId=${iid} sessionId=${sid}`);
                     bufferBox.value = "";
                     addLog("キャンセルしました");
-                } else if (sCmd && finalTranscript.includes(sCmd)) {
-                    const clean = finalTranscript.replace(new RegExp(sCmd, 'g'), "").trim();
+                } else if (sCmd && transcript.includes(sCmd)) {
+                    const clean = transcript.replace(new RegExp(sCmd, 'g'), "").trim();
+                    dbg('BUFFER', `バッファ追加(送信コマンド) "${clean.substring(0,30)}"`, `instanceId=${iid} sessionId=${sid}`);
                     bufferBox.value += applyDict(clean);
                     sendTwitchMessage();
                 } else {
-                    bufferBox.value += applyDict(finalTranscript);
+                    dbg('BUFFER', `バッファ追加 "${transcript.substring(0,30)}"`, `instanceId=${iid} sessionId=${sid}`);
+                    bufferBox.value += applyDict(transcript);
                 }
             } else {
-                previewBox.innerText = lastResult[0].transcript;
+                previewBox.innerText = transcript;
             }
         };
 
         recognition.onend = () => {
-            // 意図的な停止でなく、トグルモードで録音中かつ自動再起動が有効な場合
+            const iid = recognition._instanceId;
+            const sid = recognition._currentSessionId;
+            dbg('ONEND',
+                `認識終了コールバック`,
+                `instanceId=${iid} sessionId=${sid} isRecording=${isRecording} isIntentionalStop=${isIntentionalStop} autoRestart=${autoRestartChk.checked}`
+            );
+
             if (!isIntentionalStop && currentMode === 'toggle' && isRecording && autoRestartChk.checked) {
+                dbg('INFO', `自動再起動タイマーセット (300ms)`, `instanceId=${iid}`);
                 restartTimer = setTimeout(() => {
                     if (isRecording && !isIntentionalStop) {
-                        // 同じインスタンスをそのまま再 start（再生成しない）
-                        try { recognition.start(); } catch(e) { addLog("再起動失敗: " + e.message); }
+                        sessionCounter++;
+                        recognition._currentSessionId = `sess#${sessionCounter}`;
+                        dbg('START', `自動再起動 recognition.start()`, `instanceId=${iid} sessionId=${recognition._currentSessionId} isRecording=${isRecording}`);
+                        try { recognition.start(); } catch(e) { dbg('ONERROR', `自動再起動失敗: ${e.message}`, `instanceId=${iid}`); }
+                    } else {
+                        dbg('INFO', `自動再起動キャンセル(フラグ変化)`, `instanceId=${iid} isRecording=${isRecording} isIntentionalStop=${isIntentionalStop}`);
                     }
                 }, 300);
                 return;
@@ -233,64 +299,89 @@
         };
 
         recognition.onerror = (event) => {
-            if (event.error !== 'no-speech' && event.error !== 'aborted') {
-                addLog("認識エラー: " + event.error);
+            const iid = recognition._instanceId;
+            const sid = recognition._currentSessionId;
+            if (event.error !== 'no-speech') {
+                dbg('ONERROR', `認識エラー: ${event.error}`, `instanceId=${iid} sessionId=${sid}`);
+            } else {
+                dbg('ONERROR', `no-speech (無視)`, `instanceId=${iid} sessionId=${sid}`);
             }
         };
     }
 
-    // --- ボタン操作イベント (単一の管理に統合) ---
-    const handleMicAction = (start) => {
+    // --- ボタン操作イベント ---
+    const handleMicAction = (start, trigger) => {
+        dbg('ACTION',
+            `handleMicAction(${start ? 'START' : 'STOP'}) from=${trigger}`,
+            `isRecording=${isRecording} instanceId=${recognition?._instanceId} sessionId=${recognition?._currentSessionId}`
+        );
         if (start) {
             clearTimeout(restartTimer);
             if (!isRecording && recognition) {
                 isIntentionalStop = false;
-                isRecording = true; // onstart(非同期)を待たず即座にフラグを立てる
-                                    // → 複数イベントが連続して呼ばれても2重startを防ぐ
+                isRecording = true; // 非同期onstartを待たず即座にフラグを立てる
+                sessionCounter++;
+                recognition._currentSessionId = `sess#${sessionCounter}`;
+                dbg('START', `recognition.start() 呼び出し`,
+                    `instanceId=${recognition._instanceId} sessionId=${recognition._currentSessionId}`
+                );
                 try {
-                    addLog("認識開始");
                     recognition.start();
                 } catch(e) {
-                    isRecording = false; // 失敗したらフラグを戻す
-                    addLog("開始失敗: " + e.message);
+                    isRecording = false;
+                    dbg('ONERROR', `start() 例外: ${e.message}`, `instanceId=${recognition._instanceId}`);
                 }
+            } else {
+                dbg('ACTION', `start スキップ`,
+                    `isRecording=${isRecording} recognition=${!!recognition}`
+                );
             }
         } else {
             clearTimeout(restartTimer);
             if (isRecording) {
                 isIntentionalStop = true;
-                isRecording = false; // abort(非同期)を待たず即座にフラグを倒す
+                isRecording = false;
+                dbg('STOP', `recognition.abort() 呼び出し`,
+                    `instanceId=${recognition?._instanceId} sessionId=${recognition?._currentSessionId}`
+                );
                 try { recognition.abort(); } catch(e) {}
+            } else {
+                dbg('ACTION', `stop スキップ (既に停止中)`);
             }
         }
     };
 
-    let touchHandled = false; // タッチで処理済みのとき click を無視するフラグ
-
-    micBtn.addEventListener('mousedown', (e) => { if(currentMode==='ptt') { e.preventDefault(); handleMicAction(true); } });
-    micBtn.addEventListener('mouseup', () => { if(currentMode==='ptt') handleMicAction(false); });
+    // --- ボタンイベント登録 ---
+    micBtn.addEventListener('mousedown', (e) => {
+        dbg('EVENT', `mousedown mode=${currentMode}`);
+        if (currentMode === 'ptt') { e.preventDefault(); handleMicAction(true, 'mousedown'); }
+    });
+    micBtn.addEventListener('mouseup', () => {
+        dbg('EVENT', `mouseup mode=${currentMode}`);
+        if (currentMode === 'ptt') handleMicAction(false, 'mouseup');
+    });
     micBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
         touchHandled = true;
+        dbg('EVENT', `touchstart mode=${currentMode} isRecording=${isRecording}`);
         if (currentMode === 'ptt') {
-            handleMicAction(true);
+            handleMicAction(true, 'touchstart');
         } else {
-            if (isRecording) handleMicAction(false);
-            else handleMicAction(true);
+            if (isRecording) handleMicAction(false, 'touchstart');
+            else handleMicAction(true, 'touchstart');
         }
     });
     micBtn.addEventListener('touchend', (e) => {
         e.preventDefault();
-        if (currentMode === 'ptt') handleMicAction(false);
+        dbg('EVENT', `touchend mode=${currentMode}`);
+        if (currentMode === 'ptt') handleMicAction(false, 'touchend');
     });
-
-    // click はマウス操作（PC）向けのフォールバック
-    // タッチで処理済みの場合は必ずスキップする
     micBtn.addEventListener('click', () => {
-        if (touchHandled) { touchHandled = false; return; }
+        dbg('EVENT', `click touchHandled=${touchHandled} mode=${currentMode} isRecording=${isRecording}`);
+        if (touchHandled) { touchHandled = false; dbg('EVENT', `click → タッチ処理済みのためスキップ`); return; }
         if (currentMode === 'toggle') {
-            if (isRecording) handleMicAction(false);
-            else handleMicAction(true);
+            if (isRecording) handleMicAction(false, 'click');
+            else handleMicAction(true, 'click');
         }
     });
 
@@ -365,12 +456,6 @@
             body: JSON.stringify({ broadcaster_id: targetId, sender_id: myUserId, message: msg })
         });
         if (response.ok) { addLog(`送信成功: ${msg}`); bufferBox.value = ""; }
-    }
-
-    function addLog(text) {
-        const li = document.createElement('li');
-        li.innerText = `${new Date().toLocaleTimeString()} - ${text}`;
-        document.getElementById('log-list').prepend(li);
     }
 
     function getHashParams() {
