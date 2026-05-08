@@ -242,26 +242,40 @@
     // --- ボタン操作イベント (単一の管理に統合) ---
     const handleMicAction = (start) => {
         if (start) {
+            clearTimeout(restartTimer); // ONのときも残存タイマーを必ずクリア
             if (!isRecording && recognition) {
                 isIntentionalStop = false;
-                clearTimeout(restartTimer);
                 try { recognition.start(); } catch(e) { addLog("開始失敗: " + e.message); }
             }
         } else {
+            clearTimeout(restartTimer);
             if (isRecording) {
-                isIntentionalStop = true;   // 意図的な停止フラグ
-                clearTimeout(restartTimer);
+                isIntentionalStop = true;
                 isRecording = false;
-                try { recognition.abort(); } catch(e) {}  // abort()でクリーンに終了
+                try { recognition.abort(); } catch(e) {}
             }
         }
     };
 
     micBtn.addEventListener('mousedown', (e) => { if(currentMode==='ptt') { e.preventDefault(); handleMicAction(true); } });
     micBtn.addEventListener('mouseup', () => { if(currentMode==='ptt') handleMicAction(false); });
-    micBtn.addEventListener('touchstart', (e) => { if(currentMode==='ptt') { e.preventDefault(); handleMicAction(true); } });
-    micBtn.addEventListener('touchend', () => { if(currentMode==='ptt') handleMicAction(false); });
-    
+    micBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault(); // モードに関わらず常にpreventDefault
+                            // → touchstart以降の mousedown/mouseup/click の重複発火を防ぐ
+        if (currentMode === 'ptt') {
+            handleMicAction(true);
+        } else {
+            // トグルモード: touchstart でON/OFFを完結させる
+            if (isRecording) handleMicAction(false);
+            else handleMicAction(true);
+        }
+    });
+    micBtn.addEventListener('touchend', (e) => {
+        e.preventDefault(); // click の二重発火防止
+        if (currentMode === 'ptt') handleMicAction(false);
+    });
+
+    // click はタッチ非対応環境（PCマウス）向けのフォールバック
     micBtn.addEventListener('click', () => {
         if (currentMode === 'toggle') {
             if (isRecording) handleMicAction(false);
