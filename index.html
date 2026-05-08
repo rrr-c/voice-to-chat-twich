@@ -124,6 +124,10 @@
     let recognition;
     let isRecording = false;
     let currentMode = 'toggle';
+    let isIntentionalStop = false;   // 意図的な停止かどうか
+    let restartTimer = null;         // 再起動タイマー
+    let processedFinals = new Set(); // 重複処理防止セット（セッション内）
+    let sessionResultCount = 0;      // セッション内の処理済み結果カウンタ
 
     const micBtn = document.getElementById('mic-btn');
     const bufferBox = document.getElementById('buffer-box');
@@ -166,34 +170,46 @@
     }
 
     // --- 音声認識コア (初期ソースの安定ロジックをベースに修正) ---
-    function setupSpeechRecognition() {
+    function createRecognitionInstance() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) return alert("非対応ブラウザです");
-        
-        recognition = new SpeechRecognition();
-        recognition.lang = 'ja-JP';
-        recognition.interimResults = true;
-        recognition.continuous = true;
+        if (!SpeechRecognition) { alert("非対応ブラウザです"); return null; }
 
-        recognition.onstart = () => {
+        const rec = new SpeechRecognition();
+        rec.lang = 'ja-JP';
+        rec.interimResults = true;
+        rec.continuous = true;
+
+        rec.onstart = () => {
             isRecording = true;
+            // セッション開始時に重複防止セットをリセット
+            processedFinals.clear();
+            sessionResultCount = 0;
             statusText.innerText = '聴取中...';
             micBtn.classList.add('recording-active');
             micBtn.innerText = currentMode === 'toggle' ? 'マイクをオフにする' : '録音中...';
         };
 
-        recognition.onresult = (event) => {
+        rec.onresult = (event) => {
             let interimTranscript = '';
             let finalTranscript = '';
 
             for (let i = event.resultIndex; i < event.results.length; ++i) {
-                const transcript = event.results[i][0].transcript;
-                if (event.results[i].isFinal) finalTranscript += transcript;
-                else interimTranscript += transcript;
+                if (event.results[i].isFinal) {
+                    const resultIdx = i; // インデックスをキーに使用
+                    const transcript = event.results[i][0].transcript;
+
+                    // 重複チェック: 同じインデックスの結果は1度だけ処理
+                    if (!processedFinals.has(resultIdx)) {
+                        processedFinals.add(resultIdx);
+                        finalTranscript += transcript;
+                    }
+                } else {
+                    interimTranscript += event.results[i][0].transcript;
+                }
             }
 
             // リアルタイム表示 (プレビュー)
-            previewBox.innerText = interimTranscript || "...";
+            previewBox.innerText = interimTranscript || (finalTranscript ? "..." : "");
 
             if (finalTranscript) {
                 const sCmd = cmdSendInput.value.trim();
@@ -212,23 +228,54 @@
             }
         };
 
-        recognition.onend = () => {
-            if (currentMode === 'toggle' && isRecording && autoRestartChk.checked) {
-                try { recognition.start(); return; } catch(e) {}
+        rec.onend = () => {
+            // 意図的な停止でなく、トグルモードで録音中かつ自動再起動が有効な場合
+            if (!isIntentionalStop && currentMode === 'toggle' && isRecording && autoRestartChk.checked) {
+                // 少し待ってから再起動（即時再起動だとブラウザが通知音を連発しやすい）
+                restartTimer = setTimeout(() => {
+                    if (isRecording && !isIntentionalStop) {
+                        // インスタンスを使い回さず新規作成することで重複結果を根本的に防ぐ
+                        setupSpeechRecognition();
+                        try { recognition.start(); } catch(e) { addLog("再起動失敗: " + e.message); }
+                    }
+                }, 300);
+                return;
             }
             isRecording = false;
             statusText.innerText = '停止中';
             micBtn.classList.remove('recording-active');
             micBtn.innerText = currentMode === 'toggle' ? 'マイクをオンにする' : '押している間だけ話す';
         };
+
+        rec.onerror = (event) => {
+            // "no-speech" はよく起きるので無視、それ以外はログ
+            if (event.error !== 'no-speech') {
+                addLog("認識エラー: " + event.error);
+            }
+        };
+
+        return rec;
+    }
+
+    function setupSpeechRecognition() {
+        recognition = createRecognitionInstance();
     }
 
     // --- ボタン操作イベント (単一の管理に統合) ---
     const handleMicAction = (start) => {
         if (start) {
-            if (!isRecording) try { recognition.start(); } catch(e){}
+            if (!isRecording && recognition) {
+                isIntentionalStop = false;
+                clearTimeout(restartTimer);
+                try { recognition.start(); } catch(e) { addLog("開始失敗: " + e.message); }
+            }
         } else {
-            if (isRecording) { isRecording = false; recognition.stop(); }
+            if (isRecording) {
+                isIntentionalStop = true;   // 意図的な停止フラグ
+                clearTimeout(restartTimer);
+                isRecording = false;
+                try { recognition.abort(); } catch(e) {}  // abort()でクリーンに終了
+            }
         }
     };
 
