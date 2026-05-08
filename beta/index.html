@@ -242,41 +242,51 @@
     // --- ボタン操作イベント (単一の管理に統合) ---
     const handleMicAction = (start) => {
         if (start) {
-            clearTimeout(restartTimer); // ONのときも残存タイマーを必ずクリア
+            clearTimeout(restartTimer);
             if (!isRecording && recognition) {
                 isIntentionalStop = false;
-                try { recognition.start(); } catch(e) { addLog("開始失敗: " + e.message); }
+                isRecording = true; // onstart(非同期)を待たず即座にフラグを立てる
+                                    // → 複数イベントが連続して呼ばれても2重startを防ぐ
+                try {
+                    recognition.start();
+                } catch(e) {
+                    isRecording = false; // 失敗したらフラグを戻す
+                    addLog("開始失敗: " + e.message);
+                }
             }
         } else {
             clearTimeout(restartTimer);
             if (isRecording) {
                 isIntentionalStop = true;
-                isRecording = false;
+                isRecording = false; // abort(非同期)を待たず即座にフラグを倒す
                 try { recognition.abort(); } catch(e) {}
             }
         }
     };
 
+    let touchHandled = false; // タッチで処理済みのとき click を無視するフラグ
+
     micBtn.addEventListener('mousedown', (e) => { if(currentMode==='ptt') { e.preventDefault(); handleMicAction(true); } });
     micBtn.addEventListener('mouseup', () => { if(currentMode==='ptt') handleMicAction(false); });
     micBtn.addEventListener('touchstart', (e) => {
-        e.preventDefault(); // モードに関わらず常にpreventDefault
-                            // → touchstart以降の mousedown/mouseup/click の重複発火を防ぐ
+        e.preventDefault();
+        touchHandled = true;
         if (currentMode === 'ptt') {
             handleMicAction(true);
         } else {
-            // トグルモード: touchstart でON/OFFを完結させる
             if (isRecording) handleMicAction(false);
             else handleMicAction(true);
         }
     });
     micBtn.addEventListener('touchend', (e) => {
-        e.preventDefault(); // click の二重発火防止
+        e.preventDefault();
         if (currentMode === 'ptt') handleMicAction(false);
     });
 
-    // click はタッチ非対応環境（PCマウス）向けのフォールバック
+    // click はマウス操作（PC）向けのフォールバック
+    // タッチで処理済みの場合は必ずスキップする
     micBtn.addEventListener('click', () => {
+        if (touchHandled) { touchHandled = false; return; }
         if (currentMode === 'toggle') {
             if (isRecording) handleMicAction(false);
             else handleMicAction(true);
