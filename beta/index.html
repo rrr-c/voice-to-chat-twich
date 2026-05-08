@@ -222,12 +222,19 @@
         recognition.interimResults = true;
         recognition.continuous = true;
 
+        // セッション内で確定したテキストを蓄積するバッファ
+        let accumulatedTranscript = '';
+
+        // onend のタイミングで一括処理することで
+        // Android Chrome が isFinal を細切れに何度も発火する問題を回避する
         recognition.onstart = () => {
-            // onstart が呼ばれた時点でのインスタンスIDとセッションIDを記録
-            const iid = recognition._instanceId;
-            const sid = recognition._currentSessionId || '(未採番)';
-            dbg('ONSTART', `認識開始コールバック`, `instanceId=${iid} sessionId=${sid} isRecording(before)=${isRecording}`);
             isRecording = true;
+            accumulatedTranscript = '';   // セッション開始時にリセット
+            previewBox.innerText = '';
+            const iid = recognition._instanceId;
+            const sid = recognition._currentSessionId;
+            dbg('ONSTART', `認識開始コールバック`,
+                `instanceId=${iid} sessionId=${sid} isRecording(before)=${isRecording}`);
             statusText.innerText = '聴取中...';
             micBtn.classList.add('recording-active');
             micBtn.innerText = currentMode === 'toggle' ? 'マイクをオフにする' : '録音中...';
@@ -236,62 +243,84 @@
         recognition.onresult = (event) => {
             const iid = recognition._instanceId;
             const sid = recognition._currentSessionId;
-            const total = event.results.length;
-            const ridx  = event.resultIndex;
-            const lastResult = event.results[total - 1];
-            const isFinal = lastResult.isFinal;
-            const transcript = lastResult[0].transcript;
+
+            // ---- プレビュー表示 ----
+            // results の末尾だけ見て「今この瞬間の認識状態」を表示する
+            // isFinal なら確定文、そうでなければ暫定文をプレビューに出す
+            const lastResult = event.results[event.results.length - 1];
+            previewBox.innerText = lastResult[0].transcript;
+
+            // ---- 蓄積テキストの再構築 ----
+            // Android Chrome では resultIndex がセッション内でリセットされる場合があるため
+            // 毎回 results 全体を走査して空でない final を結合し直す
+            let rebuilt = '';
+            for (let i = 0; i < event.results.length; i++) {
+                if (event.results[i].isFinal) {
+                    rebuilt += event.results[i][0].transcript;
+                }
+            }
+            accumulatedTranscript = rebuilt;
 
             dbg('ONRESULT',
-                `"${transcript.substring(0, 30)}"`,
-                `instanceId=${iid} sessionId=${sid} isFinal=${isFinal} results.length=${total} resultIndex=${ridx}`
+                `preview="${lastResult[0].transcript.substring(0, 30)}" 蓄積="${accumulatedTranscript.substring(0, 30)}"`,
+                `instanceId=${iid} sessionId=${sid} isFinal=${lastResult.isFinal} results.length=${event.results.length} resultIndex=${event.resultIndex}`
             );
-
-            if (isFinal) {
-                previewBox.innerText = "";
-                const sCmd = cmdSendInput.value.trim();
-                const cCmd = cmdCancelInput.value.trim();
-
-                if (cCmd && transcript.includes(cCmd)) {
-                    dbg('BUFFER', `キャンセル実行`, `instanceId=${iid} sessionId=${sid}`);
-                    bufferBox.value = "";
-                    addLog("キャンセルしました");
-                } else if (sCmd && transcript.includes(sCmd)) {
-                    const clean = transcript.replace(new RegExp(sCmd, 'g'), "").trim();
-                    dbg('BUFFER', `バッファ追加(送信コマンド) "${clean.substring(0,30)}"`, `instanceId=${iid} sessionId=${sid}`);
-                    bufferBox.value += applyDict(clean);
-                    sendTwitchMessage();
-                } else {
-                    dbg('BUFFER', `バッファ追加 "${transcript.substring(0,30)}"`, `instanceId=${iid} sessionId=${sid}`);
-                    bufferBox.value += applyDict(transcript);
-                }
-            } else {
-                previewBox.innerText = transcript;
-            }
         };
 
         recognition.onend = () => {
             const iid = recognition._instanceId;
             const sid = recognition._currentSessionId;
+            const transcript = accumulatedTranscript.trim();
+
             dbg('ONEND',
-                `認識終了コールバック`,
+                `蓄積テキスト="${transcript.substring(0, 40)}"`,
                 `instanceId=${iid} sessionId=${sid} isRecording=${isRecording} isIntentionalStop=${isIntentionalStop} autoRestart=${autoRestartChk.checked}`
             );
 
+            // ---- バッファへの書き出し（セッション終了時に一括処理）----
+            if (transcript) {
+                const sCmd = cmdSendInput.value.trim();
+                const cCmd = cmdCancelInput.value.trim();
+
+                if (cCmd && transcript.includes(cCmd)) {
+                    dbg('BUFFER', `キャンセル実行`, `instanceId=${iid} sessionId=${sid}`);
+                    bufferBox.value = '';
+                    addLog('キャンセルしました');
+                } else if (sCmd && transcript.includes(sCmd)) {
+                    const clean = transcript.replace(new RegExp(sCmd, 'g'), '').trim();
+                    dbg('BUFFER', `バッファ追加(送信コマンド) "${clean.substring(0, 30)}"`,
+                        `instanceId=${iid} sessionId=${sid}`);
+                    bufferBox.value += applyDict(clean);
+                    sendTwitchMessage();
+                } else {
+                    dbg('BUFFER', `バッファ追加 "${transcript.substring(0, 30)}"`,
+                        `instanceId=${iid} sessionId=${sid}`);
+                    bufferBox.value += applyDict(transcript);
+                }
+            }
+
+            accumulatedTranscript = '';
+            previewBox.innerText = '';
+
+            // ---- 自動再起動 ----
             if (!isIntentionalStop && currentMode === 'toggle' && isRecording && autoRestartChk.checked) {
                 dbg('INFO', `自動再起動タイマーセット (300ms)`, `instanceId=${iid}`);
                 restartTimer = setTimeout(() => {
                     if (isRecording && !isIntentionalStop) {
                         sessionCounter++;
                         recognition._currentSessionId = `sess#${sessionCounter}`;
-                        dbg('START', `自動再起動 recognition.start()`, `instanceId=${iid} sessionId=${recognition._currentSessionId} isRecording=${isRecording}`);
-                        try { recognition.start(); } catch(e) { dbg('ONERROR', `自動再起動失敗: ${e.message}`, `instanceId=${iid}`); }
+                        dbg('START', `自動再起動 recognition.start()`,
+                            `instanceId=${iid} sessionId=${recognition._currentSessionId}`);
+                        try { recognition.start(); } catch (e) {
+                            dbg('ONERROR', `自動再起動失敗: ${e.message}`, `instanceId=${iid}`);
+                        }
                     } else {
-                        dbg('INFO', `自動再起動キャンセル(フラグ変化)`, `instanceId=${iid} isRecording=${isRecording} isIntentionalStop=${isIntentionalStop}`);
+                        dbg('INFO', `自動再起動キャンセル(フラグ変化)`, `instanceId=${iid}`);
                     }
                 }, 300);
                 return;
             }
+
             isRecording = false;
             statusText.innerText = '停止中';
             micBtn.classList.remove('recording-active');
