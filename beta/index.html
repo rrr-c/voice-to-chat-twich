@@ -203,6 +203,20 @@
                 interimTranscript = lastResult[0].transcript; // ← これでプレビューも更新される
             }
 
+            // for debug
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    const resultIdx = i; // インデックスをキーに使用
+                    const transcript = event.results[i][0].transcript;
+
+                    // 重複チェック: 同じインデックスの結果は1度だけ処理
+                    if (!processedFinals.has(resultIdx)) {
+                        processedFinals.add(resultIdx);
+                        addLog(transcript);
+                    }
+                }
+            }
+
             // リアルタイム表示 (プレビュー)
             previewBox.innerText = interimTranscript || (finalTranscript ? "..." : "");
 
@@ -244,7 +258,7 @@
 
         rec.onerror = (event) => {
             // "no-speech" はよく起きるので無視、それ以外はログ
-            if (event.error !== 'no-speech') {
+            if (event.error !== 'no-speech' && event.error !== 'aborted') {
                 addLog("認識エラー: " + event.error);
             }
         };
