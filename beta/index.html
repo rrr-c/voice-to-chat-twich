@@ -222,14 +222,14 @@
         recognition.interimResults = true;
         recognition.continuous = true;
 
-        // セッション内で確定したテキストを蓄積するバッファ
-        let accumulatedTranscript = '';
+        // Android Chrome は同じ発話に対して isFinal=true を複数回発火し、
+        // 後から来るほど完成形になる。そのため isFinal が来るたびに上書きし、
+        // onend で最後に上書きされた値をバッファに書き出す。
+        let lastFinalTranscript = '';
 
-        // onend のタイミングで一括処理することで
-        // Android Chrome が isFinal を細切れに何度も発火する問題を回避する
         recognition.onstart = () => {
             isRecording = true;
-            accumulatedTranscript = '';   // セッション開始時にリセット
+            lastFinalTranscript = '';   // セッション開始時にリセット
             previewBox.innerText = '';
             const iid = recognition._instanceId;
             const sid = recognition._currentSessionId;
@@ -243,37 +243,32 @@
         recognition.onresult = (event) => {
             const iid = recognition._instanceId;
             const sid = recognition._currentSessionId;
-
-            // ---- プレビュー表示 ----
-            // results の末尾だけ見て「今この瞬間の認識状態」を表示する
-            // isFinal なら確定文、そうでなければ暫定文をプレビューに出す
             const lastResult = event.results[event.results.length - 1];
-            previewBox.innerText = lastResult[0].transcript;
+            const transcript = lastResult[0].transcript;
 
-            // ---- 蓄積テキストの再構築 ----
-            // Android Chrome では resultIndex がセッション内でリセットされる場合があるため
-            // 毎回 results 全体を走査して空でない final を結合し直す
-            let rebuilt = '';
-            for (let i = 0; i < event.results.length; i++) {
-                if (event.results[i].isFinal) {
-                    rebuilt += event.results[i][0].transcript;
-                }
+            // プレビューには常に最新の認識結果を表示（暫定・確定どちらでも）
+            previewBox.innerText = transcript;
+
+            // isFinal が来るたびに上書き（結合しない）
+            // → 後から来るほど完成形のため、最後の値が正しい
+            if (lastResult.isFinal) {
+                lastFinalTranscript = transcript;
             }
-            accumulatedTranscript = rebuilt;
 
             dbg('ONRESULT',
-                `preview="${lastResult[0].transcript.substring(0, 30)}" 蓄積="${accumulatedTranscript.substring(0, 30)}"`,
-                `instanceId=${iid} sessionId=${sid} isFinal=${lastResult.isFinal} results.length=${event.results.length} resultIndex=${event.resultIndex}`
+                `"${transcript.substring(0, 30)}"`,
+                `instanceId=${iid} sessionId=${sid} isFinal=${lastResult.isFinal} lastFinal="${lastFinalTranscript.substring(0, 30)}" results.length=${event.results.length} resultIndex=${event.resultIndex}`
             );
         };
 
         recognition.onend = () => {
             const iid = recognition._instanceId;
             const sid = recognition._currentSessionId;
-            const transcript = accumulatedTranscript.trim();
+            // onend 時点での lastFinalTranscript が最も完成形のテキスト
+            const transcript = lastFinalTranscript.trim();
 
             dbg('ONEND',
-                `蓄積テキスト="${transcript.substring(0, 40)}"`,
+                `最終テキスト="${transcript.substring(0, 40)}"`,
                 `instanceId=${iid} sessionId=${sid} isRecording=${isRecording} isIntentionalStop=${isIntentionalStop} autoRestart=${autoRestartChk.checked}`
             );
 
@@ -299,7 +294,7 @@
                 }
             }
 
-            accumulatedTranscript = '';
+            lastFinalTranscript = '';
             previewBox.innerText = '';
 
             // ---- 自動再起動 ----
