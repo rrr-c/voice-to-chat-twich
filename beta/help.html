@@ -5,31 +5,752 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voice to Chat for Twitch – ヘルプ</title>
     <style>
+        :root {
+            --twitch-purple: #9146ff;
+            --twitch-purple-light: #bf94ff;
+            --twitch-bg: #18181b;
+            --twitch-panel: #1f1f23;
+            --twitch-card: #26262c;
+            --twitch-border: #3a3a3d;
+            --twitch-input: #0e0e10;
+            --twitch-text: #efeff1;
+            --twitch-muted: #adadb8;
+            --twitch-red: #e0245e;
+            --twitch-green: #7ed321;
+            --twitch-blue: #4a90e2;
+            --twitch-orange: #f5a623;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-            background: #fff;
-            color: #333;
-            padding: 24px;
-            margin: 0;
-            line-height: 1.7;
+            background: var(--twitch-bg);
+            color: var(--twitch-text);
+            font-size: 14px;
+            line-height: 1.6;
+            min-height: 100vh;
         }
-        h1 { font-size: 1.2em; color: #9146ff; margin-top: 0; }
-        p { color: #888; font-size: 0.95em; }
-        .placeholder {
-            border: 2px dashed #ccc;
-            border-radius: 8px;
-            padding: 40px 24px;
+
+        /* ===== TAB NAV ===== */
+        .tab-nav {
+            display: flex;
+            background: var(--twitch-input);
+            border-bottom: 2px solid var(--twitch-border);
+            overflow-x: auto;
+            scrollbar-width: none;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .tab-nav::-webkit-scrollbar { display: none; }
+
+        .tab-btn {
+            flex: 1;
+            min-width: 80px;
+            padding: 10px 6px 8px;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: var(--twitch-muted);
+            font-size: 0.78em;
+            font-weight: bold;
+            cursor: pointer;
             text-align: center;
-            color: #aaa;
-            margin-top: 24px;
+            transition: color 0.2s, border-color 0.2s;
+            white-space: nowrap;
+            letter-spacing: 0.02em;
+        }
+        .tab-btn:hover { color: var(--twitch-text); }
+        .tab-btn.active {
+            color: var(--twitch-purple-light);
+            border-bottom-color: var(--twitch-purple);
+        }
+        .tab-icon { display: block; font-size: 1.3em; margin-bottom: 2px; }
+
+        /* ===== CONTENT ===== */
+        .tab-content { display: none; padding: 18px 16px 32px; }
+        .tab-content.active { display: block; }
+
+        /* ===== SECTION CARD ===== */
+        .card {
+            background: var(--twitch-card);
+            border: 1px solid var(--twitch-border);
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 14px;
+        }
+        .card-title {
+            font-size: 0.95em;
+            font-weight: bold;
+            color: var(--twitch-purple-light);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* ===== STEP LIST ===== */
+        .step-list { list-style: none; counter-reset: step; }
+        .step-list li {
+            counter-increment: step;
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+        .step-list li::before {
+            content: counter(step);
+            flex-shrink: 0;
+            width: 24px;
+            height: 24px;
+            background: var(--twitch-purple);
+            border-radius: 50%;
+            font-size: 0.78em;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            margin-top: 1px;
+        }
+        .step-list li p { margin: 0; color: var(--twitch-text); }
+        .step-list li .sub { font-size: 0.85em; color: var(--twitch-muted); margin-top: 3px; }
+
+        /* ===== BULLET LIST ===== */
+        .bullet-list { list-style: none; }
+        .bullet-list li {
+            padding: 4px 0 4px 16px;
+            position: relative;
+            color: var(--twitch-text);
+            font-size: 0.9em;
+        }
+        .bullet-list li::before {
+            content: '▸';
+            position: absolute;
+            left: 0;
+            color: var(--twitch-purple-light);
+        }
+
+        /* ===== BADGE / CHIP ===== */
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 0.75em;
+            font-weight: bold;
+            vertical-align: middle;
+        }
+        .badge-purple { background: rgba(145,70,255,0.2); color: var(--twitch-purple-light); border: 1px solid rgba(145,70,255,0.4); }
+        .badge-red    { background: rgba(224,36,94,0.15); color: #ff6b9e; border: 1px solid rgba(224,36,94,0.35); }
+        .badge-green  { background: rgba(126,211,33,0.15); color: var(--twitch-green); border: 1px solid rgba(126,211,33,0.35); }
+        .badge-orange { background: rgba(245,166,35,0.15); color: var(--twitch-orange); border: 1px solid rgba(245,166,35,0.35); }
+        .badge-blue   { background: rgba(74,144,226,0.15); color: var(--twitch-blue); border: 1px solid rgba(74,144,226,0.35); }
+
+        /* ===== Q&A ===== */
+        .qa-block { margin-bottom: 16px; }
+        .qa-block:last-child { margin-bottom: 0; }
+        .qa-q {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            margin-bottom: 6px;
+        }
+        .qa-label-q {
+            flex-shrink: 0;
+            font-weight: bold;
+            font-size: 0.88em;
+            color: var(--twitch-purple-light);
+            background: rgba(145,70,255,0.15);
+            border: 1px solid rgba(145,70,255,0.35);
+            border-radius: 4px;
+            padding: 1px 7px;
+            line-height: 1.8;
+        }
+        .qa-q-text {
+            font-size: 0.9em;
+            font-weight: bold;
+            color: var(--twitch-text);
+            padding-top: 2px;
+        }
+        .qa-a {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+        }
+        .qa-label-a {
+            flex-shrink: 0;
+            font-weight: bold;
+            font-size: 0.88em;
+            color: var(--twitch-green);
+            background: rgba(126,211,33,0.1);
+            border: 1px solid rgba(126,211,33,0.3);
+            border-radius: 4px;
+            padding: 1px 7px;
+            line-height: 1.8;
+        }
+        .qa-a-text {
+            font-size: 0.88em;
+            color: var(--twitch-muted);
+        }
+        .qa-a-text ul { padding-left: 16px; margin-top: 2px; }
+        .qa-a-text li { margin-bottom: 3px; }
+        .qa-a-text strong { color: var(--twitch-text); }
+        .qa-divider {
+            border: none;
+            border-top: 1px dashed var(--twitch-border);
+            margin: 14px 0;
+        }
+
+        /* ===== INLINE CODE ===== */
+        code {
+            background: var(--twitch-input);
+            border: 1px solid var(--twitch-border);
+            border-radius: 3px;
+            padding: 1px 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.88em;
+            color: var(--twitch-purple-light);
+        }
+
+        /* ===== NOTE BOX ===== */
+        .note {
+            background: rgba(74,144,226,0.1);
+            border: 1px solid rgba(74,144,226,0.3);
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-size: 0.85em;
+            color: #a8c8f0;
+            margin-top: 10px;
+        }
+        .note-icon { margin-right: 4px; }
+
+        /* ===== MODE COMPARE ===== */
+        .mode-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 4px;
+        }
+        .mode-card {
+            background: var(--twitch-input);
+            border-radius: 6px;
+            padding: 10px 12px;
+            border: 1px solid var(--twitch-border);
+        }
+        .mode-card-title {
+            font-weight: bold;
+            font-size: 0.88em;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .mode-card p { font-size: 0.82em; color: var(--twitch-muted); }
+
+        /* ===== FLOW ===== */
+        .flow {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-top: 6px;
+        }
+        .flow-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.88em;
+        }
+        .flow-item .flow-icon {
+            width: 28px;
+            height: 28px;
+            background: var(--twitch-input);
+            border: 1px solid var(--twitch-border);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1em;
+            flex-shrink: 0;
+        }
+        .flow-arrow {
+            text-align: center;
+            color: var(--twitch-purple);
+            font-size: 1.2em;
+            line-height: 1;
+            padding-left: 6px;
+        }
+
+        /* ===== DICT EXAMPLE ===== */
+        .dict-example {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--twitch-input);
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin-top: 8px;
+            font-size: 0.88em;
+        }
+        .dict-arrow { color: var(--twitch-purple-light); font-size: 1.1em; }
+
+        /* ===== DIVIDER ===== */
+        .divider {
+            border: none;
+            border-top: 1px solid var(--twitch-border);
+            margin: 12px 0;
+        }
+
+        /* ===== PAGE TITLE ===== */
+        .page-title {
+            font-size: 1.05em;
+            font-weight: bold;
+            color: var(--twitch-purple-light);
+            margin-bottom: 14px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--twitch-border);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        @media (max-width: 360px) {
+            .mode-grid { grid-template-columns: 1fr; }
+            .tab-btn { font-size: 0.72em; min-width: 70px; }
         }
     </style>
 </head>
 <body>
-    <h1>📖 ヘルプ</h1>
-    <p>このファイルはダミーです。後ほど実際のヘルプコンテンツに置き換えてください。</p>
-    <div class="placeholder">
-        🚧 ヘルプコンテンツ 作成中
+
+<!-- ===== TAB NAV ===== -->
+<nav class="tab-nav">
+    <button class="tab-btn active" onclick="switchTab('setup', this)">
+        <span class="tab-icon">⚙️</span>初期設定
+    </button>
+    <button class="tab-btn" onclick="switchTab('usage', this)">
+        <span class="tab-icon">🎙️</span>使い方
+    </button>
+    <button class="tab-btn" onclick="switchTab('advanced', this)">
+        <span class="tab-icon">🔧</span>詳細設定
+    </button>
+    <button class="tab-btn" onclick="switchTab('trouble', this)">
+        <span class="tab-icon">🆘</span>トラブル
+    </button>
+</nav>
+
+<!-- ===================================================== -->
+<!-- TAB 1: 初期設定 -->
+<!-- ===================================================== -->
+<div id="tab-setup" class="tab-content active">
+    <div class="page-title">⚙️ 初期設定</div>
+
+    <div class="card">
+        <div class="card-title">🔑 Twitch Client ID の取得</div>
+        <ol class="step-list">
+            <li>
+                <div>
+                    <p><strong>Twitch Developer Console</strong> にアクセス</p>
+                    <p class="sub"><code>dev.twitch.tv/console</code> をブラウザで開く</p>
+                </div>
+            </li>
+            <li>
+                <div>
+                    <p>「<strong>アプリケーションを登録</strong>」をクリック</p>
+                    <p class="sub">右上の「+ アプリケーションを登録」ボタン</p>
+                </div>
+            </li>
+            <li>
+                <div>
+                    <p>必要事項を入力する</p>
+                    <p class="sub">名前は自由。カテゴリは「Chat Bot」など</p>
+                </div>
+            </li>
+            <li>
+                <div>
+                    <p><strong>OAuth リダイレクト URI</strong> を設定</p>
+                    <p class="sub">アプリのセットアップ画面に表示されている URI をそのまま貼り付ける</p>
+                </div>
+            </li>
+            <li>
+                <div>
+                    <p>登録後、「<strong>クライアントID</strong>」をコピー</p>
+                    <p class="sub">アプリのセットアップ画面に貼り付けて「保存して進む」をクリック</p>
+                </div>
+            </li>
+        </ol>
+        <div class="note">
+            <span class="note-icon">ℹ️</span>Client ID はあなた自身のアプリ識別子です。他人に教えないよう注意してください。
+        </div>
     </div>
+
+    <div class="card">
+        <div class="card-title">🔐 Twitchログイン・連携</div>
+        <ol class="step-list">
+            <li>
+                <div>
+                    <p>「<strong>Twitchでログイン</strong>」をクリック</p>
+                    <p class="sub">Twitch の認証ページに移動します</p>
+                </div>
+            </li>
+            <li>
+                <div>
+                    <p>権限を確認して「<strong>許可</strong>」をクリック</p>
+                    <p class="sub">チャットへの書き込み権限 (<code>user:write:chat</code>) を要求します</p>
+                </div>
+            </li>
+            <li>
+                <div>
+                    <p>アプリ画面に戻り、ユーザー名が表示されれば完了</p>
+                    <p class="sub">以降はブラウザを閉じるまでログイン状態が続きます</p>
+                </div>
+            </li>
+        </ol>
+        <div class="note">
+            <span class="note-icon">⚠️</span>アクセストークンはブラウザのメモリ内にのみ保持され、サーバーには送信されません。
+        </div>
+    </div>
+</div>
+
+<!-- ===================================================== -->
+<!-- TAB 2: 基本的な使い方 -->
+<!-- ===================================================== -->
+<div id="tab-usage" class="tab-content">
+    <div class="page-title">🎙️ 基本的な使い方</div>
+
+    <div class="card">
+        <div class="card-title">🔘 マイクモードの選択</div>
+        <div class="mode-grid">
+            <div class="mode-card">
+                <div class="mode-card-title"><span>🔄</span> <span style="color:var(--twitch-purple-light)">トグルモード</span></div>
+                <p>ボタンを一度押してON、もう一度押してOFF。両手が使えるため配信中のゲーム操作向け。</p>
+            </div>
+            <div class="mode-card">
+                <div class="mode-card-title"><span>👆</span> <span style="color:var(--twitch-orange)">PTTモード</span></div>
+                <p>ボタンを押している間だけ録音。誤認識を防ぎたいときや、短い発言に向いている。</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">📤 チャットを送信するには</div>
+        <div class="flow">
+            <div class="flow-item">
+                <div class="flow-icon">🎙️</div>
+                <span>マイクをONにして話す</span>
+            </div>
+            <div class="flow-arrow">↓</div>
+            <div class="flow-item">
+                <div class="flow-icon">👁️</div>
+                <span>「認識中...」エリアにリアルタイムで文字が表示される</span>
+            </div>
+            <div class="flow-arrow">↓</div>
+            <div class="flow-item">
+                <div class="flow-icon">📝</div>
+                <span>発話が終わると「送信バッファ」に追加される</span>
+            </div>
+            <div class="flow-arrow">↓</div>
+            <div class="flow-item">
+                <div class="flow-icon">🗣️</div>
+                <span><strong>送信コマンド</strong>（初期値: <code>チャット送信</code>）と発話する</span>
+            </div>
+            <div class="flow-arrow">↓</div>
+            <div class="flow-item">
+                <div class="flow-icon">✅</div>
+                <span>バッファの内容がTwitchチャットに送信される</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">🗣️ 音声コマンド一覧</div>
+        <ul class="bullet-list">
+            <li>
+                <strong>送信コマンド</strong>（初期値: <code>チャット送信</code>）<br>
+                <span style="color:var(--twitch-muted); font-size:0.85em">バッファの内容をチャットに送信します。コマンドワード自体はメッセージから除去されます。</span>
+            </li>
+            <li style="margin-top:8px;">
+                <strong>キャンセルコマンド</strong>（初期値: <code>キャンセル</code>）<br>
+                <span style="color:var(--twitch-muted); font-size:0.85em">バッファの内容をすべて削除します。送信をやり直したいときに使います。</span>
+            </li>
+        </ul>
+        <div class="note">
+            <span class="note-icon">💡</span>コマンドは「詳細設定」から自分の話し言葉に合わせて変更できます。
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">🧹 送信バッファのクリア</div>
+        <p style="font-size:0.9em; color:var(--twitch-muted)">
+            送信バッファ右上の <span class="badge badge-red">クリア</span> ボタンを押すと、バッファを即座に空にできます。音声コマンド「キャンセル」と同じ動作です。
+        </p>
+    </div>
+</div>
+
+<!-- ===================================================== -->
+<!-- TAB 3: 詳細設定 -->
+<!-- ===================================================== -->
+<div id="tab-advanced" class="tab-content">
+    <div class="page-title">🔧 詳細設定</div>
+
+    <div class="card">
+        <div class="card-title">🔄 自動再起動</div>
+        <p style="font-size:0.9em; color:var(--twitch-muted)">
+            <strong style="color:var(--twitch-text)">「認識が切れたら自動で再開する」</strong>にチェックを入れると、音声認識が自然に終了した際に自動で再開します。<br>
+            <span style="font-size:0.85em">※ トグルモードのみ有効です。PTTモードでは機能しません。</span>
+        </p>
+        <div class="note">
+            <span class="note-icon">💡</span>長時間配信で毎回ボタンを押し直したくない場合に便利です。
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">⌨️ 音声コマンドのカスタマイズ</div>
+        <ul class="bullet-list">
+            <li><strong>送信コマンド</strong> — 発話してチャットを送信するキーワード</li>
+            <li><strong>キャンセルコマンド</strong> — バッファを空にするキーワード</li>
+        </ul>
+        <p style="font-size:0.85em; color:var(--twitch-muted); margin-top:8px;">
+            認識されやすい、はっきりした言葉に設定すると誤作動が減ります。例：<code>送信</code>、<code>おくる</code>
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="card-title">📺 送信先チャンネルの変更</div>
+        <p style="font-size:0.9em; color:var(--twitch-muted)">
+            「送信先」欄を空欄にすると自分のチャンネルに送信されます。<br>
+            別のユーザー名（例: <code>streamer123</code>）を入力すると、そのチャンネルのチャットに書き込みます。
+        </p>
+    </div>
+
+    <hr class="divider">
+
+    <div class="card">
+        <div class="card-title">📖 エモート辞書の使い方</div>
+        <p style="font-size:0.88em; color:var(--twitch-muted); margin-bottom:8px;">
+            音声で認識された語句を、Twitchエモートコードなど任意の文字列に自動変換します。
+        </p>
+
+        <div class="dict-example">
+            <span>🎤 <code>カッパ</code></span>
+            <span class="dict-arrow">→</span>
+            <span>💬 <code>Kappa</code></span>
+        </div>
+        <div class="dict-example">
+            <span>🎤 <code>ハイパー</code></span>
+            <span class="dict-arrow">→</span>
+            <span>💬 <code>HyperCool</code></span>
+        </div>
+
+        <hr class="divider">
+
+        <p style="font-size:0.88em; font-weight:bold; color:var(--twitch-text); margin-bottom:6px;">追加方法</p>
+        <ol class="step-list">
+            <li>
+                <div>
+                    <p>「認識語」に音声で読み上げる言葉を入力</p>
+                    <p class="sub">例: <code>カッパ</code></p>
+                </div>
+            </li>
+            <li>
+                <div>
+                    <p>「変換コード」に置き換えたい文字列を入力</p>
+                    <p class="sub">例: <code>Kappa</code></p>
+                </div>
+            </li>
+            <li>
+                <div>
+                    <p>「追加」ボタンをクリック</p>
+                    <p class="sub">テーブルに追加されると同時にローカルに保存されます</p>
+                </div>
+            </li>
+        </ol>
+
+        <hr class="divider">
+
+        <p style="font-size:0.88em; font-weight:bold; color:var(--twitch-text); margin-bottom:6px;">Import / Export</p>
+        <ul class="bullet-list">
+            <li>
+                <span class="badge badge-green">⬆ Export</span>
+                &nbsp;辞書を JSON ファイルとして保存します。バックアップや別端末への移行に利用できます。
+            </li>
+            <li style="margin-top:6px;">
+                <span class="badge badge-orange">⬇ Import</span>
+                &nbsp;JSON ファイルから辞書を読み込みます。既存の辞書に追加（マージ）されます。重複する「認識語」はスキップされます。
+            </li>
+        </ul>
+
+        <div class="note" style="margin-top:10px;">
+            <span class="note-icon">📄</span>Import ファイルの形式: <code>[{"word":"カッパ","code":"Kappa"}, ...]</code>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">🐛 デバッグログ</div>
+        <p style="font-size:0.9em; color:var(--twitch-muted)">
+            「デバッグログを表示する」をオンにすると、音声認識の内部イベントや通信ログが画面下部に表示されます。<br>
+            問題を報告する際は <span class="badge badge-blue">📋 ログをコピー</span> で内容を取得できます。
+        </p>
+    </div>
+</div>
+
+<!-- ===================================================== -->
+<!-- TAB 4: トラブルシューティング -->
+<!-- ===================================================== -->
+<div id="tab-trouble" class="tab-content">
+    <div class="page-title">🆘 トラブルシューティング</div>
+
+    <div class="card">
+        <div class="card-title">🎙️ マイク・音声認識</div>
+
+        <div class="qa-block">
+            <div class="qa-q">
+                <span class="qa-label-q">Q</span>
+                <span class="qa-q-text">マイクボタンを押しても反応しない / 許可が求められない</span>
+            </div>
+            <div class="qa-a">
+                <span class="qa-label-a">A</span>
+                <div class="qa-a-text">
+                    <ul>
+                        <li><strong>ブラウザのマイク権限</strong>を確認してください。アドレスバー左の 🔒 アイコン → サイトの設定 → マイク を「許可」に変更します。</li>
+                        <li>Chrome / Edge での動作を推奨します。Firefox や Safari は Web Speech API の対応が不完全な場合があります。</li>
+                        <li>HTTPS または localhost 以外では動作しません。</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <hr class="qa-divider">
+
+        <div class="qa-block">
+            <div class="qa-q">
+                <span class="qa-label-q">Q</span>
+                <span class="qa-q-text">すぐに認識が止まってしまう</span>
+            </div>
+            <div class="qa-a">
+                <span class="qa-label-a">A</span>
+                <div class="qa-a-text">
+                    <ul>
+                        <li>「<strong>自動で再開する</strong>」チェックを有効にしてください（トグルモードのみ）。</li>
+                        <li>無音が続くと認識エンジンが自動的に停止することがあります。これはブラウザの仕様です。</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <hr class="qa-divider">
+
+        <div class="qa-block">
+            <div class="qa-q">
+                <span class="qa-label-q">Q</span>
+                <span class="qa-q-text">認識精度が低い / 違う言葉として認識される</span>
+            </div>
+            <div class="qa-a">
+                <span class="qa-label-a">A</span>
+                <div class="qa-a-text">
+                    <ul>
+                        <li>マイクを口に近づけ、はっきり発話してください。</li>
+                        <li>エモート辞書に登録することで、誤認識される語句を正しいコードに変換できます。</li>
+                        <li>送信・キャンセルコマンドを認識されやすいワードに変更してみてください。</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">📤 チャット送信</div>
+
+        <div class="qa-block">
+            <div class="qa-q">
+                <span class="qa-label-q">Q</span>
+                <span class="qa-q-text">送信コマンドを言っても送信されない</span>
+            </div>
+            <div class="qa-a">
+                <span class="qa-label-a">A</span>
+                <div class="qa-a-text">
+                    <ul>
+                        <li>「詳細設定」の<strong>送信コマンド</strong>欄に入力した語句と一致しているか確認してください。</li>
+                        <li>「認識中...」エリアに表示されたテキストがコマンドと一致するか確認してみてください。</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <hr class="qa-divider">
+
+        <div class="qa-block">
+            <div class="qa-q">
+                <span class="qa-label-q">Q</span>
+                <span class="qa-q-text">送信エラーが出る / チャットに反映されない</span>
+            </div>
+            <div class="qa-a">
+                <span class="qa-label-a">A</span>
+                <div class="qa-a-text">
+                    <ul>
+                        <li>アクセストークンが失効している可能性があります。一度 <strong>Logout</strong> してログインし直してください。</li>
+                        <li>送信先チャンネルの入力が正しいか確認してください（空欄 = 自分のチャンネル）。</li>
+                        <li>ブラウザの Developer Tools (F12) → コンソールで詳細なエラーを確認できます。</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">⚙️ 設定・認証</div>
+
+        <div class="qa-block">
+            <div class="qa-q">
+                <span class="qa-label-q">Q</span>
+                <span class="qa-q-text">Client ID を再設定したい</span>
+            </div>
+            <div class="qa-a">
+                <span class="qa-label-a">A</span>
+                <div class="qa-a-text">
+                    ログイン画面の <strong>「Client ID を再設定」</strong> ボタンをクリックしてください。またはブラウザの localStorage をクリアしてページをリロードすることでも初期化できます。
+                </div>
+            </div>
+        </div>
+
+        <hr class="qa-divider">
+
+        <div class="qa-block">
+            <div class="qa-q">
+                <span class="qa-label-q">Q</span>
+                <span class="qa-q-text">辞書データが消えた</span>
+            </div>
+            <div class="qa-a">
+                <span class="qa-label-a">A</span>
+                <div class="qa-a-text">
+                    辞書はブラウザの localStorage に保存されています。ブラウザのキャッシュ・サイトデータを削除すると失われます。定期的に <span class="badge badge-green">⬆ Export</span> でバックアップしておくことを推奨します。
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">📋 ログを取得して報告する</div>
+        <ol class="step-list">
+            <li><div><p>「詳細設定」→「デバッグログを表示する」をオン</p></div></li>
+            <li><div><p>問題が起きる操作を再現する</p></div></li>
+            <li><div><p>ログ欄の <span class="badge badge-blue">📋 ログをコピー</span> をクリック</p></div></li>
+            <li><div><p>コピーした内容を開発者に共有する</p></div></li>
+        </ol>
+    </div>
+</div>
+
+<script>
+    function switchTab(name, btn) {
+        // コンテンツ切替
+        document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+        document.getElementById('tab-' + name).classList.add('active');
+        // ボタン切替
+        document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+        btn.classList.add('active');
+        // スクロールをトップに戻す
+        document.querySelector('.tab-content.active').scrollTop = 0;
+        window.scrollTo(0, 0);
+    }
+</script>
 </body>
 </html>
