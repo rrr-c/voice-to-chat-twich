@@ -86,6 +86,80 @@
             100% { box-shadow: 0 0 5px #e0245e; }
         }
         .recording-active { background-color: #e0245e !important; animation: pulse-glow 1.5s infinite; }
+
+        /* ヘルプ FAB */
+        #help-fab {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--twitch-purple);
+            color: white;
+            font-size: 1.4em;
+            font-weight: bold;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s, transform 0.15s;
+            width: 48px; /* globalのwidth:100%を上書き */
+            z-index: 900;
+        }
+        #help-fab:hover { background: #772ce8; transform: scale(1.1); }
+
+        /* ヘルプ モーダル */
+        #help-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        #help-overlay.open { display: flex; }
+        #help-modal {
+            background: var(--twitch-panel);
+            border: 1px solid #3a3a3d;
+            border-radius: 12px;
+            width: min(680px, 92vw);
+            height: min(540px, 85vh);
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+            overflow: hidden;
+        }
+        #help-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            border-bottom: 1px solid #3a3a3d;
+            flex-shrink: 0;
+        }
+        #help-modal-header span { font-weight: bold; color: #bf94ff; font-size: 1em; }
+        #help-close-btn {
+            background: none;
+            border: none;
+            color: #adadb8;
+            font-size: 1.4em;
+            cursor: pointer;
+            padding: 0 4px;
+            line-height: 1;
+            width: auto;
+            transition: color 0.15s;
+        }
+        #help-close-btn:hover { color: white; background: none; }
+        #help-iframe {
+            flex: 1;
+            border: none;
+            width: 100%;
+            background: #fff;
+        }
     </style>
 </head>
 <body>
@@ -180,6 +254,20 @@
             </div>
             <ul id="log-list" class="log-list"></ul>
         </div>
+    </div>
+</div>
+
+<!-- ヘルプ FAB -->
+<button id="help-fab" title="ヘルプを開く">?</button>
+
+<!-- ヘルプ モーダル -->
+<div id="help-overlay">
+    <div id="help-modal">
+        <div id="help-modal-header">
+            <span>❓ ヘルプ</span>
+            <button id="help-close-btn" title="閉じる">✕</button>
+        </div>
+        <iframe id="help-iframe" src="./help.html" title="ヘルプ"></iframe>
     </div>
 </div>
 
@@ -623,6 +711,18 @@
         });
         if (response.ok) { addLog(`送信成功: ${msg}`); bufferBox.value = ""; }
     }
+
+    // --- ヘルプ モーダル ---
+    const helpOverlay = document.getElementById('help-overlay');
+    const openHelp = () => helpOverlay.classList.add('open');
+    const closeHelp = () => helpOverlay.classList.remove('open');
+
+    document.getElementById('help-fab').addEventListener('click', openHelp);
+    document.getElementById('help-close-btn').addEventListener('click', closeHelp);
+    // オーバーレイ（背景）クリックで閉じる
+    helpOverlay.addEventListener('click', (e) => { if (e.target === helpOverlay) closeHelp(); });
+    // ESC キーで閉じる
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHelp(); });
 
     function getHashParams() {
         const hash = window.location.hash.substring(1);
