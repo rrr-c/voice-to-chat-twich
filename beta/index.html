@@ -70,10 +70,14 @@
         <details>
             <summary style="cursor:pointer; font-weight:bold; color:#bf94ff; margin-bottom: 10px;">⚙️ 詳細設定</summary>
             
-            <div style="margin: 10px 0; padding-top: 10px; border-top: 1px solid #3a3a3d;">
+            <div style="margin: 10px 0; padding-top: 10px; border-top: 1px solid #3a3a3d; display: flex; flex-direction: column; gap: 8px;">
                 <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                    <input type="checkbox" id="auto-restart-chk" style="width: auto;"> 
+                    <input type="checkbox" id="auto-restart-chk" style="width: auto;">
                     認識が切れたら自動で再開する (トグルモードのみ)
+                </label>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="debug-log-chk" style="width: auto;">
+                    デバッグログを表示する
                 </label>
             </div>
 
@@ -109,8 +113,10 @@
         <button id="mic-btn" style="font-size: 1.1em; height: 55px;">マイクをオンにする</button>
         <p style="text-align: center; font-size: 0.8em; color: #adadb8;">Status: <span id="status-text">停止中</span></p>
 
-        <label>ログ</label>
-        <ul id="log-list" class="log-list"></ul>
+        <div id="log-section" style="display:none;">
+            <label>ログ</label>
+            <ul id="log-list" class="log-list"></ul>
+        </div>
     </div>
 </div>
 
@@ -128,36 +134,35 @@
     let restartTimer = null;
     let touchHandled = false;
 
-    // --- デバッグ用カウンタ ---
-    let instanceCounter = 0;   // recognition インスタンスの通し番号
-    let sessionCounter  = 0;   // recognition.start() を呼ぶたびに採番するセッション番号
+    let instanceCounter = 0;
+    let sessionCounter  = 0;
     let currentInstanceId = null;
     let currentSessionId  = null;
+    let debugEnabled = false; // デバッグログON/OFFフラグ
 
-    // ms精度タイムスタンプ
     function ts() {
         const now = new Date();
         return `${now.toLocaleTimeString()}.${String(now.getMilliseconds()).padStart(3,'0')}`;
     }
 
-    // デバッグログ: 画面のログリストとコンソール両方に出力
+    // debugEnabled が false のときは console のみ（画面には出さない）
     function dbg(category, msg, extra = '') {
         const line = `[${ts()}][${category}] ${msg}${extra ? ' | ' + extra : ''}`;
         console.log(line);
+        if (!debugEnabled) return;
         const li = document.createElement('li');
         li.innerText = line;
-        // カテゴリ別に色分け
         const colors = {
-            'EVENT':    '#f5a623',  // タッチ/クリックイベント
-            'ACTION':   '#7ed321',  // handleMicAction
-            'START':    '#4a90e2',  // recognition.start
-            'STOP':     '#9b9b9b',  // recognition.abort/stop
-            'ONSTART':  '#50e3c2',  // recognition.onstart callback
-            'ONEND':    '#bd10e0',  // recognition.onend callback
-            'ONRESULT': '#e8f',     // recognition.onresult callback
-            'BUFFER':   '#e0245e',  // バッファへの書き込み
-            'ONERROR':  '#ff0000',  // エラー
-            'INFO':     '#adadb8',  // その他
+            'EVENT':    '#f5a623',
+            'ACTION':   '#7ed321',
+            'START':    '#4a90e2',
+            'STOP':     '#9b9b9b',
+            'ONSTART':  '#50e3c2',
+            'ONEND':    '#bd10e0',
+            'ONRESULT': '#e8f',
+            'BUFFER':   '#e0245e',
+            'ONERROR':  '#ff0000',
+            'INFO':     '#adadb8',
         };
         li.style.color = colors[category] || '#adadb8';
         document.getElementById('log-list').prepend(li);
@@ -222,19 +227,17 @@
         recognition.interimResults = true;
         recognition.continuous = true;
 
-        // Android Chrome は同じ発話に対して isFinal=true を複数回発火し、
-        // 後から来るほど完成形になる。そのため isFinal が来るたびに上書きし、
-        // onend で最後に上書きされた値をバッファに書き出す。
+        // Android Chrome は同一発話に対し isFinal=true を細切れに複数回発火し
+        // 後から来るほど完成形になる。isFinal のたびに上書きし onend で一括処理する。
         let lastFinalTranscript = '';
 
         recognition.onstart = () => {
             isRecording = true;
-            lastFinalTranscript = '';   // セッション開始時にリセット
+            lastFinalTranscript = '';
             previewBox.innerText = '';
             const iid = recognition._instanceId;
-            const sid = recognition._currentSessionId;
-            dbg('ONSTART', `認識開始コールバック`,
-                `instanceId=${iid} sessionId=${sid} isRecording(before)=${isRecording}`);
+            const sid = recognition._currentSessionId || '(未採番)';
+            dbg('ONSTART', `認識開始コールバック`, `instanceId=${iid} sessionId=${sid} isRecording(before)=${isRecording}`);
             statusText.innerText = '聴取中...';
             micBtn.classList.add('recording-active');
             micBtn.innerText = currentMode === 'toggle' ? 'マイクをオフにする' : '録音中...';
@@ -250,72 +253,61 @@
             previewBox.innerText = transcript;
 
             // isFinal が来るたびに上書き（結合しない）
-            // → 後から来るほど完成形のため、最後の値が正しい
+            // 後から来るほど完成形のため、最後の値が正しい
             if (lastResult.isFinal) {
                 lastFinalTranscript = transcript;
             }
 
             dbg('ONRESULT',
                 `"${transcript.substring(0, 30)}"`,
-                `instanceId=${iid} sessionId=${sid} isFinal=${lastResult.isFinal} lastFinal="${lastFinalTranscript.substring(0, 30)}" results.length=${event.results.length} resultIndex=${event.resultIndex}`
+                `instanceId=${iid} sessionId=${sid} isFinal=${lastResult.isFinal} lastFinal="${lastFinalTranscript.substring(0,30)}" results.length=${event.results.length} resultIndex=${event.resultIndex}`
             );
         };
 
         recognition.onend = () => {
             const iid = recognition._instanceId;
             const sid = recognition._currentSessionId;
-            // onend 時点での lastFinalTranscript が最も完成形のテキスト
             const transcript = lastFinalTranscript.trim();
-
             dbg('ONEND',
                 `最終テキスト="${transcript.substring(0, 40)}"`,
                 `instanceId=${iid} sessionId=${sid} isRecording=${isRecording} isIntentionalStop=${isIntentionalStop} autoRestart=${autoRestartChk.checked}`
             );
 
-            // ---- バッファへの書き出し（セッション終了時に一括処理）----
+            // セッション終了時にバッファへ一括書き出し
             if (transcript) {
                 const sCmd = cmdSendInput.value.trim();
                 const cCmd = cmdCancelInput.value.trim();
-
                 if (cCmd && transcript.includes(cCmd)) {
                     dbg('BUFFER', `キャンセル実行`, `instanceId=${iid} sessionId=${sid}`);
                     bufferBox.value = '';
                     addLog('キャンセルしました');
                 } else if (sCmd && transcript.includes(sCmd)) {
                     const clean = transcript.replace(new RegExp(sCmd, 'g'), '').trim();
-                    dbg('BUFFER', `バッファ追加(送信コマンド) "${clean.substring(0, 30)}"`,
-                        `instanceId=${iid} sessionId=${sid}`);
+                    dbg('BUFFER', `バッファ追加(送信コマンド) "${clean.substring(0,30)}"`, `instanceId=${iid} sessionId=${sid}`);
                     bufferBox.value += applyDict(clean);
                     sendTwitchMessage();
                 } else {
-                    dbg('BUFFER', `バッファ追加 "${transcript.substring(0, 30)}"`,
-                        `instanceId=${iid} sessionId=${sid}`);
+                    dbg('BUFFER', `バッファ追加 "${transcript.substring(0,30)}"`, `instanceId=${iid} sessionId=${sid}`);
                     bufferBox.value += applyDict(transcript);
                 }
             }
-
             lastFinalTranscript = '';
             previewBox.innerText = '';
 
-            // ---- 自動再起動 ----
             if (!isIntentionalStop && currentMode === 'toggle' && isRecording && autoRestartChk.checked) {
                 dbg('INFO', `自動再起動タイマーセット (300ms)`, `instanceId=${iid}`);
                 restartTimer = setTimeout(() => {
                     if (isRecording && !isIntentionalStop) {
                         sessionCounter++;
                         recognition._currentSessionId = `sess#${sessionCounter}`;
-                        dbg('START', `自動再起動 recognition.start()`,
-                            `instanceId=${iid} sessionId=${recognition._currentSessionId}`);
-                        try { recognition.start(); } catch (e) {
-                            dbg('ONERROR', `自動再起動失敗: ${e.message}`, `instanceId=${iid}`);
-                        }
+                        dbg('START', `自動再起動 recognition.start()`, `instanceId=${iid} sessionId=${recognition._currentSessionId} isRecording=${isRecording}`);
+                        try { recognition.start(); } catch(e) { dbg('ONERROR', `自動再起動失敗: ${e.message}`, `instanceId=${iid}`); }
                     } else {
-                        dbg('INFO', `自動再起動キャンセル(フラグ変化)`, `instanceId=${iid}`);
+                        dbg('INFO', `自動再起動キャンセル(フラグ変化)`, `instanceId=${iid} isRecording=${isRecording} isIntentionalStop=${isIntentionalStop}`);
                     }
                 }, 300);
                 return;
             }
-
             isRecording = false;
             statusText.innerText = '停止中';
             micBtn.classList.remove('recording-active');
@@ -430,6 +422,16 @@
     document.getElementById('logout-btn').addEventListener('click', () => { location.href = REDIRECT_URI; });
     
     autoRestartChk.addEventListener('change', () => localStorage.setItem('twitch_auto_restart', autoRestartChk.checked));
+
+    const debugLogChk = document.getElementById('debug-log-chk');
+    debugLogChk.checked = localStorage.getItem('twitch_debug_log') === 'true';
+    debugEnabled = debugLogChk.checked;
+    document.getElementById('log-section').style.display = debugEnabled ? 'block' : 'none';
+    debugLogChk.addEventListener('change', () => {
+        debugEnabled = debugLogChk.checked;
+        localStorage.setItem('twitch_debug_log', debugEnabled);
+        document.getElementById('log-section').style.display = debugEnabled ? 'block' : 'none';
+    });
 
     function applyDict(text) {
         let t = text;
