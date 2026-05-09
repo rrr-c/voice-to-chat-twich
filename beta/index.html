@@ -135,7 +135,14 @@
             </div>
 
             <div style="margin-top: 15px;">
-                <label>📖 エモート辞書</label>
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+                    <label style="margin-bottom:0;">📖 エモート辞書</label>
+                    <div style="display:flex; gap:6px;">
+                        <button id="export-dict-btn" style="width:auto; padding:2px 10px; font-size:0.78em; background:none; border:1px solid #7ed321; color:#7ed321; border-radius:4px; font-weight:bold; cursor:pointer;">⬆ Export</button>
+                        <button id="import-dict-btn" style="width:auto; padding:2px 10px; font-size:0.78em; background:none; border:1px solid #f5a623; color:#f5a623; border-radius:4px; font-weight:bold; cursor:pointer;">⬇ Import</button>
+                        <input type="file" id="import-dict-file" accept=".json" style="display:none;">
+                    </div>
+                </div>
                 <div class="dict-form">
                     <input type="text" id="dict-word" placeholder="認識語">
                     <input type="text" id="dict-code" placeholder="変換コード">
@@ -546,6 +553,49 @@
         if(w && c) { emoteDictionary.push({word: w, code: c}); renderDictionary(); }
     });
     window.deleteDictItem = (i) => { emoteDictionary.splice(i, 1); renderDictionary(); };
+
+    // --- エモート辞書 Export ---
+    document.getElementById('export-dict-btn').addEventListener('click', () => {
+        const json = JSON.stringify(emoteDictionary, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const date = new Date().toISOString().slice(0, 10);
+        a.href = url;
+        a.download = `emote-dict-${date}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        addLog(`辞書をエクスポートしました (${emoteDictionary.length}件)`);
+    });
+
+    // --- エモート辞書 Import ---
+    document.getElementById('import-dict-btn').addEventListener('click', () => {
+        document.getElementById('import-dict-file').value = ''; // 同じファイルの再選択も発火させる
+        document.getElementById('import-dict-file').click();
+    });
+    document.getElementById('import-dict-file').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const parsed = JSON.parse(ev.target.result);
+                if (!Array.isArray(parsed) || !parsed.every(item => typeof item.word === 'string' && typeof item.code === 'string')) {
+                    throw new Error('フォーマット不正');
+                }
+                // 重複チェック: 既存にない word のみ追加
+                const existingWords = new Set(emoteDictionary.map(i => i.word));
+                const added = parsed.filter(item => !existingWords.has(item.word));
+                const skipped = parsed.length - added.length;
+                emoteDictionary.push(...added);
+                renderDictionary();
+                addLog(`インポート完了: ${added.length}件追加, ${skipped}件スキップ (重複)`);
+            } catch (err) {
+                alert(`インポート失敗: ${err.message}\n\n正しいJSON形式か確認してください。\n例: [{"word":"カッパ","code":"Kappa"}]`);
+            }
+        };
+        reader.readAsText(file);
+    });
 
     async function fetchUserInfo() {
         const resp = await fetch('https://api.twitch.tv/helix/users', { headers: { 'Authorization': `Bearer ${accessToken}`, 'Client-Id': clientId } });
