@@ -125,6 +125,22 @@
             background: none;
         }
 
+        /* バッファタイミング切り替え */
+        .timing-selector {
+            display: flex;
+            gap: 16px;
+            margin-top: 4px;
+        }
+        .timing-selector label {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: #adadb8;
+            font-size: 0.85em;
+            margin-bottom: 0;
+        }
+
         /* ヘルプ FAB */
         #help-fab {
             position: fixed;
@@ -242,6 +258,24 @@
                     <input type="checkbox" id="debug-log-chk" style="width: auto;">
                     デバッグログを表示する
                 </label>
+
+                <!-- バッファ書き込みタイミング -->
+                <div style="padding-top: 6px; border-top: 1px solid #3a3a3d;">
+                    <label style="margin-bottom: 6px;">バッファ書き込みタイミング</label>
+                    <div class="timing-selector">
+                        <label>
+                            <input type="radio" name="buffer-timing" value="onend" style="width: auto;">
+                            認識終了時（Android向け）
+                        </label>
+                        <label>
+                            <input type="radio" name="buffer-timing" value="isfinal" style="width: auto;">
+                            即時（iOS / PC向け）
+                        </label>
+                    </div>
+                    <p style="font-size: 0.78em; color: #6b6b7a; margin: 4px 0 0;">
+                        ※ Androidで文字が重複する場合は「認識終了時」を選択してください
+                    </p>
+                </div>
             </div>
 
             <div class="settings-grid">
@@ -331,6 +365,10 @@
     let currentSessionId  = null;
     let debugEnabled = false;
 
+    // バッファ書き込みタイミング: 'onend' | 'isfinal'
+    let bufferTiming = localStorage.getItem('twitch_buffer_timing') || 'onend';
+
+    // ログを文字列で保持（コピー用）
     const logLines = [];
 
     function ts() {
@@ -381,6 +419,16 @@
     targetChannelInput.value = localStorage.getItem('twitch_target_channel') || "";
     autoRestartChk.checked = localStorage.getItem('twitch_auto_restart') === 'true';
 
+    // バッファタイミング ラジオボタン初期化
+    document.querySelectorAll('input[name="buffer-timing"]').forEach(r => {
+        if (r.value === bufferTiming) r.checked = true;
+        r.addEventListener('change', (e) => {
+            bufferTiming = e.target.value;
+            localStorage.setItem('twitch_buffer_timing', bufferTiming);
+            dbg('INFO', `バッファタイミング変更: ${bufferTiming}`);
+        });
+    });
+
     let emoteDictionary = JSON.parse(localStorage.getItem('twitch_voice_dict')) || [{word: "カッパ", code: "Kappa"}];
 
     // --- OAuth URL生成 ---
@@ -418,6 +466,32 @@
         document.getElementById(id).style.display = 'block';
     }
 
+    // --- コマンド処理共通関数 ---
+    // transcript を受け取り、バッファ書き込み・コマンド判定を行う
+    // skipBufferWrite=true のとき: コマンド判定のみ（即時モードのonend用）
+    function processTranscript(transcript, skipBufferWrite, iid, sid) {
+        const sCmd = cmdSendInput.value.trim();
+        const cCmd = cmdCancelInput.value.trim();
+
+        if (cCmd && transcript.includes(cCmd)) {
+            dbg('BUFFER', `キャンセル実行`, `instanceId=${iid} sessionId=${sid} skip=${skipBufferWrite}`);
+            bufferBox.value = '';
+            addLog('キャンセルしました');
+        } else if (sCmd && transcript.includes(sCmd)) {
+            const clean = transcript.replace(new RegExp(sCmd, 'g'), '').trim();
+            dbg('BUFFER', `送信コマンド検出 "${clean.substring(0,30)}"`, `instanceId=${iid} sessionId=${sid} skip=${skipBufferWrite}`);
+            if (!skipBufferWrite) {
+                bufferBox.value += applyDict(clean);
+            }
+            sendTwitchMessage();
+        } else {
+            if (!skipBufferWrite) {
+                dbg('BUFFER', `バッファ追加 "${transcript.substring(0,30)}"`, `instanceId=${iid} sessionId=${sid}`);
+                bufferBox.value += applyDict(transcript);
+            }
+        }
+    }
+
     // --- 音声認識コア ---
     function setupSpeechRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -434,14 +508,17 @@
         recognition.continuous = true;
 
         let lastFinalTranscript = '';
+        // 即時モード: isFinalで書き込み済みのセグメントを追跡するセット
+        let writtenResultIndices = new Set();
 
         recognition.onstart = () => {
             isRecording = true;
             lastFinalTranscript = '';
+            writtenResultIndices = new Set();
             previewBox.innerText = '';
             const iid = recognition._instanceId;
             const sid = recognition._currentSessionId || '(未採番)';
-            dbg('ONSTART', `認識開始コールバック`, `instanceId=${iid} sessionId=${sid} isRecording(before)=${isRecording}`);
+            dbg('ONSTART', `認識開始コールバック`, `instanceId=${iid} sessionId=${sid} timing=${bufferTiming}`);
             statusText.innerText = '聴取中...';
             micBtn.classList.add('recording-active');
             micBtn.innerText = currentMode === 'toggle' ? 'マイクをオフにする' : '録音中...';
@@ -457,11 +534,26 @@
 
             if (lastResult.isFinal) {
                 lastFinalTranscript = transcript;
+
+                // 即時モード: isFinal時点でバッファ書き込み
+                if (bufferTiming === 'isfinal') {
+                    const resultIndex = event.results.length - 1;
+                    if (!writtenResultIndices.has(resultIndex)) {
+                        writtenResultIndices.add(resultIndex);
+                        dbg('ONRESULT', `即時バッファ書き込み index=${resultIndex} "${transcript.substring(0,30)}"`,
+                            `instanceId=${iid} sessionId=${sid}`);
+                        processTranscript(transcript, false, iid, sid);
+                        // 書き込み済みなのでpreviewをクリア
+                        previewBox.innerText = '';
+                    } else {
+                        dbg('ONRESULT', `重複スキップ index=${resultIndex}`, `instanceId=${iid} sessionId=${sid}`);
+                    }
+                }
             }
 
             dbg('ONRESULT',
                 `"${transcript.substring(0, 30)}"`,
-                `instanceId=${iid} sessionId=${sid} isFinal=${lastResult.isFinal} lastFinal="${lastFinalTranscript.substring(0,30)}" results.length=${event.results.length} resultIndex=${event.resultIndex}`
+                `instanceId=${iid} sessionId=${sid} isFinal=${lastResult.isFinal} timing=${bufferTiming} results.length=${event.results.length} resultIndex=${event.resultIndex}`
             );
         };
 
@@ -471,27 +563,23 @@
             const transcript = lastFinalTranscript.trim();
             dbg('ONEND',
                 `最終テキスト="${transcript.substring(0, 40)}"`,
-                `instanceId=${iid} sessionId=${sid} isRecording=${isRecording} isIntentionalStop=${isIntentionalStop} autoRestart=${autoRestartChk.checked}`
+                `instanceId=${iid} sessionId=${sid} isRecording=${isRecording} isIntentionalStop=${isIntentionalStop} autoRestart=${autoRestartChk.checked} timing=${bufferTiming}`
             );
 
             if (transcript) {
-                const sCmd = cmdSendInput.value.trim();
-                const cCmd = cmdCancelInput.value.trim();
-                if (cCmd && transcript.includes(cCmd)) {
-                    dbg('BUFFER', `キャンセル実行`, `instanceId=${iid} sessionId=${sid}`);
-                    bufferBox.value = '';
-                    addLog('キャンセルしました');
-                } else if (sCmd && transcript.includes(sCmd)) {
-                    const clean = transcript.replace(new RegExp(sCmd, 'g'), '').trim();
-                    dbg('BUFFER', `バッファ追加(送信コマンド) "${clean.substring(0,30)}"`, `instanceId=${iid} sessionId=${sid}`);
-                    bufferBox.value += applyDict(clean);
-                    sendTwitchMessage();
+                if (bufferTiming === 'isfinal') {
+                    // 即時モード: isFinalで書き込み済みのためコマンド判定のみ
+                    // ただし writtenResultIndices に登録済みかどうかで判断できないため、
+                    // onresult での processTranscript 呼び出し時にコマンドも処理済みなのでここでは何もしない
+                    dbg('ONEND', `即時モード: バッファ書き込みスキップ（isFinalで処理済み）`, `instanceId=${iid} sessionId=${sid}`);
                 } else {
-                    dbg('BUFFER', `バッファ追加 "${transcript.substring(0,30)}"`, `instanceId=${iid} sessionId=${sid}`);
-                    bufferBox.value += applyDict(transcript);
+                    // 標準モード: onend でバッファ書き込み＋コマンド判定
+                    processTranscript(transcript, false, iid, sid);
                 }
             }
+
             lastFinalTranscript = '';
+            writtenResultIndices = new Set();
             previewBox.innerText = '';
 
             if (!isIntentionalStop && currentMode === 'toggle' && isRecording && autoRestartChk.checked) {
@@ -637,7 +725,7 @@
             location.reload();
         }
     });
-    
+        
     autoRestartChk.addEventListener('change', () => localStorage.setItem('twitch_auto_restart', autoRestartChk.checked));
 
     const debugLogChk = document.getElementById('debug-log-chk');
