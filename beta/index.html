@@ -631,7 +631,12 @@
         location.href = buildOAuthUrl(true);
     });
 
-    document.getElementById('reset-client-btn').addEventListener('click', () => { location.href = REDIRECT_URI; });
+    document.getElementById('reset-client-btn').addEventListener('click', () => {
+        if (confirm("Client ID をリセットしますか？")) {
+            localStorage.removeItem('twitch_client_id');
+            location.reload();
+        }
+    });
     
     autoRestartChk.addEventListener('change', () => localStorage.setItem('twitch_auto_restart', autoRestartChk.checked));
 
