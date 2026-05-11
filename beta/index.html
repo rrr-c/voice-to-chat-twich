@@ -87,6 +87,44 @@
         }
         .recording-active { background-color: #e0245e !important; animation: pulse-glow 1.5s infinite; }
 
+        /* ユーザー情報行 */
+        .user-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .user-row > span { flex: 1; min-width: 0; }
+
+        /* ログアウトボタン群 */
+        .logout-btn-group {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .logout-btn-group button {
+            width: auto;
+            padding: 5px 10px;
+            margin: 0;
+            font-size: 0.78em;
+        }
+        #logout-btn {
+            background-color: #3a3a3d;
+        }
+        #switch-account-btn {
+            background: none;
+            border: 1px solid #adadb8;
+            color: #adadb8;
+            transition: border-color 0.15s, color 0.15s, background 0.15s;
+        }
+        #switch-account-btn:hover {
+            border-color: #bf94ff;
+            color: #bf94ff;
+            background: none;
+        }
+
         /* ヘルプ FAB */
         #help-fab {
             position: fixed;
@@ -106,7 +144,7 @@
             align-items: center;
             justify-content: center;
             transition: background 0.2s, transform 0.15s;
-            width: 48px; /* globalのwidth:100%を上書き */
+            width: 48px;
             z-index: 900;
         }
         #help-fab:hover { background: #772ce8; transform: scale(1.1); }
@@ -183,9 +221,13 @@
     </div>
 
     <div id="app-section" class="section">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <div class="user-row">
             <span>User: <strong id="user-info" style="color:#bf94ff;">---</strong></span>
-            <button id="logout-btn" class="secondary" style="width: auto; padding: 5px 10px; margin: 0; font-size: 0.8em;">Logout</button>
+            <!-- ログアウト2ボタン構成 -->
+            <div class="logout-btn-group">
+                <button id="logout-btn" class="secondary" title="ログアウトして再ログイン画面へ">ログアウト</button>
+                <button id="switch-account-btn" title="別のTwitchアカウントに切り替える">アカウント切替</button>
+            </div>
         </div>
 
         <details>
@@ -230,7 +272,6 @@
             <label>認識中...</label>
             <div id="preview-box">マイクをONにしてください</div>
 
-            <!-- ① 送信バッファ + クリアボタン -->
             <div class="buffer-label-row">
                 <label>送信バッファ</label>
                 <button id="clear-buffer-btn">クリア</button>
@@ -246,7 +287,6 @@
         <button id="mic-btn" style="font-size: 1.1em; height: 55px;">マイクをオンにする</button>
         <p style="text-align: center; font-size: 0.8em; color: #adadb8;">Status: <span id="status-text">停止中</span></p>
 
-        <!-- ② ログセクション + コピーボタン -->
         <div id="log-section" style="display:none;">
             <div class="log-header-row">
                 <label>ログ</label>
@@ -291,7 +331,6 @@
     let currentSessionId  = null;
     let debugEnabled = false;
 
-    // ログを文字列で保持（コピー用）
     const logLines = [];
 
     function ts() {
@@ -302,7 +341,7 @@
     function dbg(category, msg, extra = '') {
         const line = `[${ts()}][${category}] ${msg}${extra ? ' | ' + extra : ''}`;
         console.log(line);
-        logLines.push(line); // ① 常に蓄積
+        logLines.push(line);
         if (!debugEnabled) return;
         const li = document.createElement('li');
         li.innerText = line;
@@ -343,6 +382,19 @@
     autoRestartChk.checked = localStorage.getItem('twitch_auto_restart') === 'true';
 
     let emoteDictionary = JSON.parse(localStorage.getItem('twitch_voice_dict')) || [{word: "カッパ", code: "Kappa"}];
+
+    // --- OAuth URL生成 ---
+    function buildOAuthUrl(forceVerify = false) {
+        const base = `https://id.twitch.tv/oauth2/authorize`;
+        const params = new URLSearchParams({
+            client_id: clientId,
+            redirect_uri: REDIRECT_URI,
+            response_type: 'token',
+            scope: 'user:write:chat',
+        });
+        if (forceVerify) params.set('force_verify', 'true');
+        return `${base}?${params.toString()}`;
+    }
 
     // --- 初期化 ---
     window.onload = async () => {
@@ -564,17 +616,22 @@
     });
 
     document.getElementById('login-btn').addEventListener('click', () => {
-        location.href = `https://id.twitch.tv/oauth2/authorize?client_id=${clientId}&redirect_uri=${REDIRECT_URI}&response_type=token&scope=user:write:chat`;
+        location.href = buildOAuthUrl(false);
     });
 
-    document.getElementById('reset-client-btn').addEventListener('click', () => {
-        if (confirm("Client ID をリセットしますか？")) {
-            localStorage.removeItem('twitch_client_id');
-            location.reload();
-        }
+    // ログアウト: トークンを破棄して再ログイン画面へ（同じアカウントでもワンクリック再認証可能）
+    document.getElementById('logout-btn').addEventListener('click', () => {
+        accessToken = '';
+        location.href = REDIRECT_URI;
     });
 
-    document.getElementById('logout-btn').addEventListener('click', () => { location.href = REDIRECT_URI; });
+    // アカウント切替: force_verify=true でTwitchのアカウント選択画面を強制表示
+    document.getElementById('switch-account-btn').addEventListener('click', () => {
+        accessToken = '';
+        location.href = buildOAuthUrl(true);
+    });
+
+    document.getElementById('reset-client-btn').addEventListener('click', () => { location.href = REDIRECT_URI; });
     
     autoRestartChk.addEventListener('change', () => localStorage.setItem('twitch_auto_restart', autoRestartChk.checked));
 
@@ -588,16 +645,13 @@
         document.getElementById('log-section').style.display = debugEnabled ? 'block' : 'none';
     });
 
-    // ① 送信バッファ クリアボタン
     document.getElementById('clear-buffer-btn').addEventListener('click', () => {
         bufferBox.value = '';
         addLog('バッファをクリアしました');
     });
 
-    // ② ログ コピーボタン
     document.getElementById('copy-log-btn').addEventListener('click', async () => {
         const btn = document.getElementById('copy-log-btn');
-        // logLines は新しい順に prepend されているため逆順にして時系列に整列
         const text = [...logLines].reverse().join('\n');
         try {
             await navigator.clipboard.writeText(text);
@@ -608,7 +662,6 @@
                 btn.classList.remove('copied');
             }, 2000);
         } catch (e) {
-            // フォールバック: textarea経由
             const ta = document.createElement('textarea');
             ta.value = text;
             ta.style.cssText = 'position:fixed;opacity:0;';
@@ -649,7 +702,6 @@
     });
     window.deleteDictItem = (i) => { emoteDictionary.splice(i, 1); renderDictionary(); };
 
-    // --- エモート辞書 Export ---
     document.getElementById('export-dict-btn').addEventListener('click', () => {
         const json = JSON.stringify(emoteDictionary, null, 2);
         const blob = new Blob([json], { type: 'application/json' });
@@ -663,9 +715,8 @@
         addLog(`辞書をエクスポートしました (${emoteDictionary.length}件)`);
     });
 
-    // --- エモート辞書 Import ---
     document.getElementById('import-dict-btn').addEventListener('click', () => {
-        document.getElementById('import-dict-file').value = ''; // 同じファイルの再選択も発火させる
+        document.getElementById('import-dict-file').value = '';
         document.getElementById('import-dict-file').click();
     });
     document.getElementById('import-dict-file').addEventListener('change', (e) => {
@@ -678,7 +729,6 @@
                 if (!Array.isArray(parsed) || !parsed.every(item => typeof item.word === 'string' && typeof item.code === 'string')) {
                     throw new Error('フォーマット不正');
                 }
-                // 重複チェック: 既存にない word のみ追加
                 const existingWords = new Set(emoteDictionary.map(i => i.word));
                 const added = parsed.filter(item => !existingWords.has(item.word));
                 const skipped = parsed.length - added.length;
@@ -726,9 +776,7 @@
 
     document.getElementById('help-fab').addEventListener('click', openHelp);
     document.getElementById('help-close-btn').addEventListener('click', closeHelp);
-    // オーバーレイ（背景）クリックで閉じる
     helpOverlay.addEventListener('click', (e) => { if (e.target === helpOverlay) closeHelp(); });
-    // ESC キーで閉じる
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHelp(); });
 
     function getHashParams() {
