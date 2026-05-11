@@ -567,6 +567,13 @@
         location.href = `https://id.twitch.tv/oauth2/authorize?client_id=${clientId}&redirect_uri=${REDIRECT_URI}&response_type=token&scope=user:write:chat`;
     });
 
+    document.getElementById('reset-client-btn').addEventListener('click', () => {
+        if (confirm("Client ID をリセットしますか？")) {
+            localStorage.removeItem('twitch_client_id');
+            location.reload();
+        }
+    });
+
     document.getElementById('logout-btn').addEventListener('click', () => { location.href = REDIRECT_URI; });
     
     autoRestartChk.addEventListener('change', () => localStorage.setItem('twitch_auto_restart', autoRestartChk.checked));
